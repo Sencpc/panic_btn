@@ -104,9 +104,7 @@ async function initDB() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Insert a dummy device for UI testing if empty
-    await pool.query(`INSERT IGNORE INTO devices (device_id, device_name, status, last_seen, device_ip)
-                      VALUES ('ARDPB0001', 'Gedung Utama', 'normal', NOW(), '192.168.2.248')`);
+
 
     console.log("Connected to MySQL database and initialized tables.");
   } catch (err) {
@@ -194,11 +192,12 @@ async function getHeartbeatInterval(deviceId) {
 
 async function getAndConsumeCommand(deviceId) {
   const [rows] = await pool.query(
-    `SELECT * FROM device_commands WHERE device_id = ? ORDER BY created_at ASC LIMIT 1`,
+    `SELECT * FROM device_commands WHERE device_id = ? ORDER BY created_at DESC LIMIT 1`,
     [deviceId],
   );
+  // Delete ALL queued commands for this device (prevents stacking)
+  await pool.query(`DELETE FROM device_commands WHERE device_id = ?`, [deviceId]);
   if (rows.length > 0) {
-    await pool.query(`DELETE FROM device_commands WHERE id = ?`, [rows[0].id]);
     return rows[0].command;
   }
   return null;

@@ -9,8 +9,8 @@ const int PIN_BUTTON = A0;
 const int PIN_LED_RED = 4;
 const int PIN_LED_YELLOW = 5;
 const int PIN_LED_GREEN = 6;
-const int PIN_SIREN = A1;
-const int PIN_ROTATOR = A3;
+const int PIN_SIREN = 8;
+const int PIN_ROTATOR = 7;
 
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
 IPAddress ip(192, 168, 0, 177);
@@ -34,8 +34,8 @@ const uint8_t SECRET_KEY[32] = {
 unsigned long lastHeartbeat = 0;
 const unsigned long heartbeatInterval = 5000;
 bool isPanicActive = false;
-bool lastButtonState = HIGH; 
 bool isSilentMode = false;
+bool resetLocked = false;
 
 void setup() {
   pinMode(PIN_BUTTON, INPUT_PULLUP); 
@@ -54,9 +54,6 @@ void setup() {
   
   Ethernet.init(10); 
   Serial.begin(9600);
-  while (!Serial) {
-    ; 
-  }
   
   Serial.println(F("Initialize Ethernet"));
   if (Ethernet.begin(mac) == 0) {
@@ -81,27 +78,25 @@ void setup() {
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
+  bool currentButtonState = digitalRead(PIN_BUTTON);
+  delay(50); 
+  
+  if (currentButtonState == LOW && resetLocked) {
+    resetLocked = false;
+  }
 
+  if (currentButtonState == HIGH && !isPanicActive && !resetLocked) {
+    if (digitalRead(PIN_BUTTON) == HIGH) {
+      Serial.println(F("Circuit OPEN detected (button pressed or jack unplugged) - Panic ON!"));
+      triggerPanicON();
+    }
+  }
+
+  unsigned long currentMillis = millis();
   if (currentMillis - lastHeartbeat >= heartbeatInterval || lastHeartbeat == 0) {
     lastHeartbeat = currentMillis;
     sendApiRequest("/api/heartbeat", "heartbeat");
   }
-
-  bool currentButtonState = digitalRead(PIN_BUTTON);
-  delay(50); 
-
-  if (currentButtonState != lastButtonState) {
-    if (digitalRead(PIN_BUTTON) == currentButtonState) {
-      if (currentButtonState == LOW) {
-        Serial.println(F("Physical Button Pressed - Latching Panic ON!"));
-        triggerPanicON();
-      } else {
-        Serial.println(F("Physical Button Released - Ignoring."));
-      }
-    }
-  }
-  lastButtonState = currentButtonState;
   
   Ethernet.maintain(); 
 }
@@ -132,7 +127,7 @@ void sendApiRequest(const char* endpoint, const char* statusType) {
   char nonce[9];
   sprintf(nonce, "%04x%04x", (unsigned int)random(65536), (unsigned int)random(65536));
 
-  char buffer[300]; 
+  char buffer[512]; 
   
   if (strcmp(statusType, "heartbeat") == 0) {
     snprintf_P(buffer, sizeof(buffer), 
@@ -143,7 +138,7 @@ void sendApiRequest(const char* endpoint, const char* statusType) {
       digitalRead(PIN_LED_RED) == RELAY_ON ? "true" : "false",
       digitalRead(PIN_LED_YELLOW) == RELAY_ON ? "true" : "false",
       digitalRead(PIN_LED_GREEN) == RELAY_ON ? "true" : "false",
-      !digitalRead(PIN_BUTTON) ? "true" : "false",
+      digitalRead(PIN_BUTTON) == HIGH ? "true" : "false",
       digitalRead(PIN_SIREN) == RELAY_ON ? "true" : "false",
       digitalRead(PIN_ROTATOR) == RELAY_ON ? "true" : "false",
       isPanicActive ? "true" : "false");
@@ -198,16 +193,28 @@ void sendApiRequest(const char* endpoint, const char* statusType) {
     client.println();
 
     client.print(buffer); 
-    
-    client.setTimeout(3000);
+    client.setTimeout(5000);
     if (client.find("\r\n\r\n")) {
       
-      int bytesRead = client.readBytes(buffer, sizeof(buffer) - 1);
+      int bytesRead = 0;
+      unsigned long readStart = millis();
+      while (bytesRead < (int)sizeof(buffer) - 1 && millis() - readStart < 3000) {
+        if (client.available()) {
+          buffer[bytesRead++] = client.read();
+          readStart = millis();
+        } else {
+          delay(10);
+        }
+      }
       buffer[bytesRead] = '\0';
+      
+      Serial.print(F("Response (")); Serial.print(bytesRead); Serial.println(F(" bytes):"));
+      Serial.println(buffer);
       
       if (strstr(buffer, "\"command\":\"reset\"")) {
         Serial.println(F("\n>>> Received RESET command from Dashboard <<<"));
         isPanicActive = false;
+        resetLocked = true;
         digitalWrite(PIN_LED_YELLOW, RELAY_OFF);
         digitalWrite(PIN_SIREN, RELAY_OFF);
         digitalWrite(PIN_ROTATOR, RELAY_OFF);
