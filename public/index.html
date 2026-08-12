@@ -1242,6 +1242,7 @@
           connected: true,
           lastUpdate: "--:--:--",
           refreshTimer: null,
+          lastHistoryRefresh: 0,
 
           init() {
             this.updateDashboard();
@@ -1294,6 +1295,17 @@
                 this.events = evData.events;
               }
               this.connected = true;
+
+              // Auto-refresh open history panels every 10 seconds
+              const now = Date.now();
+              if (now - this.lastHistoryRefresh > 10000) {
+                this.lastHistoryRefresh = now;
+                for (const dev of this.devices) {
+                  if (dev.historyOpen) {
+                    this.loadHistory(dev);
+                  }
+                }
+              }
             } catch (err) {
               this.connected = false;
             }

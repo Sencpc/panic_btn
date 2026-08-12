@@ -839,7 +839,7 @@ app.post("/api/dashboard/panic", async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices SET status = 'panic', last_seen = NOW() WHERE device_id = ?`,
+      `UPDATE devices SET status = 'panic' WHERE device_id = ?`,
       [device_id],
     );
     const [result] = await pool.query(
@@ -870,7 +870,7 @@ app.post("/api/dashboard/reset", async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices SET status = 'normal', last_seen = NOW() WHERE device_id = ?`,
+      `UPDATE devices SET status = 'normal' WHERE device_id = ?`,
       [device_id],
     );
     const [result] = await pool.query(
