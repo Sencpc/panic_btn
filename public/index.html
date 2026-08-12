@@ -40,6 +40,65 @@
       };
     </script>
     <style>
+      /* History Dropdown */
+      .history-panel {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .history-panel.open {
+        max-height: 600px;
+        overflow-y: auto;
+      }
+      .history-table th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: #0f172a;
+      }
+      .history-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        transition: all 0.3s ease;
+      }
+      .history-dot.on-red {
+        background: #ef4444;
+        box-shadow: 0 0 8px rgba(239,68,68,0.6);
+      }
+      .history-dot.on-yellow {
+        background: #f59e0b;
+        box-shadow: 0 0 8px rgba(245,158,11,0.6);
+      }
+      .history-dot.on-green {
+        background: #10b981;
+        box-shadow: 0 0 8px rgba(16,185,129,0.6);
+      }
+      .history-dot.on-blue {
+        background: #3b82f6;
+        box-shadow: 0 0 8px rgba(59,130,246,0.6);
+      }
+      .history-dot.on-purple {
+        background: #a855f7;
+        box-shadow: 0 0 8px rgba(168,85,247,0.6);
+      }
+      .history-dot.off-dot {
+        background: #334155;
+        border: 1px solid #475569;
+      }
+      .history-btn {
+        transition: all 0.3s ease;
+      }
+      .history-btn:hover {
+        background: rgba(59,130,246,0.15);
+      }
+      .history-btn .chevron {
+        transition: transform 0.3s ease;
+      }
+      .history-btn.open .chevron {
+        transform: rotate(180deg);
+      }
       body {
         background: radial-gradient(
           circle at top center,
@@ -911,6 +970,98 @@
                   </button>
                 </div>
               </div>
+
+              <!-- History Dropdown Section -->
+              <div class="border-t border-borderDim">
+                <button
+                  @click="toggleHistory(dev)"
+                  class="history-btn w-full px-6 py-3 flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors"
+                  :class="dev.historyOpen ? 'open' : ''"
+                >
+                  <span class="flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Heartbeat History
+                    <span
+                      x-show="dev.historyData && dev.historyData.length > 0"
+                      class="bg-blue-500/15 text-blue-400 text-[10px] px-1.5 py-0.5 rounded-md font-bold border border-blue-500/20"
+                      x-text="dev.historyData ? dev.historyData.length + ' records' : ''"
+                    ></span>
+                  </span>
+                  <svg class="chevron w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </button>
+
+                <div
+                  class="history-panel"
+                  :class="dev.historyOpen ? 'open' : ''"
+                >
+                  <!-- Loading State -->
+                  <div x-show="dev.historyLoading" class="py-8 text-center">
+                    <div class="inline-flex items-center gap-2 text-sm text-slate-500">
+                      <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                      </svg>
+                      Loading history...
+                    </div>
+                  </div>
+
+                  <!-- Empty State -->
+                  <div x-show="!dev.historyLoading && (!dev.historyData || dev.historyData.length === 0)" class="py-8 text-center text-sm text-slate-500">
+                    No heartbeat history recorded.
+                  </div>
+
+                  <!-- History Table -->
+                  <div x-show="!dev.historyLoading && dev.historyData && dev.historyData.length > 0">
+                    <table class="history-table w-full text-left text-xs">
+                      <thead class="bg-surface border-b border-borderDim text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                        <tr>
+                          <th class="py-3 px-4">Date & Time</th>
+                          <th class="py-3 px-3 text-center">YLW</th>
+                          <th class="py-3 px-3 text-center">GRN</th>
+                          <th class="py-3 px-3 text-center">RED</th>
+                          <th class="py-3 px-3 text-center">SI</th>
+                          <th class="py-3 px-3 text-center">RO</th>
+                          <th class="py-3 px-3 text-center">PS</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-borderDim/30">
+                        <template x-for="hb in dev.historyData" :key="hb.id">
+                          <tr class="hover:bg-surfaceHover/40 transition-colors">
+                            <td class="py-2.5 px-4 whitespace-nowrap">
+                              <div class="flex flex-col">
+                                <span class="font-mono text-slate-300 text-[11px]" x-text="formatEventTime(hb.received_at)"></span>
+                                <span class="text-[9px] text-slate-500" x-text="formatEventDate(hb.received_at)"></span>
+                              </div>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.led_yellow ? 'on-yellow' : 'off-dot'"></span>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.led_green ? 'on-green' : 'off-dot'"></span>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.led_red ? 'on-red' : 'off-dot'"></span>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.sirene ? 'on-red' : 'off-dot'"></span>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.rotator ? 'on-blue' : 'off-dot'"></span>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.panic_state ? 'on-purple' : 'off-dot'"></span>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
         </div>
@@ -1128,6 +1279,11 @@
                     start_time: "00:00:00",
                     end_time: "00:00:00",
                   };
+                  // Preserve history state from previous render
+                  const existing = this.devices.find(d => d.device_id === dev.device_id);
+                  dev.historyOpen = existing ? existing.historyOpen : false;
+                  dev.historyData = existing ? existing.historyData : null;
+                  dev.historyLoading = existing ? existing.historyLoading : false;
                 }
                 this.devices = devData.devices;
               }
@@ -1250,6 +1406,30 @@
             } catch (e) {
               showToast("Server connection failed", "error");
             }
+          },
+
+          async toggleHistory(dev) {
+            dev.historyOpen = !dev.historyOpen;
+            if (dev.historyOpen && !dev.historyData) {
+              await this.loadHistory(dev);
+            }
+          },
+
+          async loadHistory(dev) {
+            dev.historyLoading = true;
+            try {
+              const res = await fetch(`/api/heartbeat/history/${dev.device_id}?limit=50`);
+              const data = await res.json();
+              if (data.success) {
+                dev.historyData = data.heartbeats;
+              } else {
+                dev.historyData = [];
+              }
+            } catch (e) {
+              dev.historyData = [];
+              showToast('Failed to load history', 'error');
+            }
+            dev.historyLoading = false;
           },
 
           formatSecondsAgo(seconds) {
