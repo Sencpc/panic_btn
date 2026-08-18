@@ -9,8 +9,7 @@ const PORT = 3000;
 
 // Default Secret Key (Matches Arduino)
 const HMAC_SECRET_KEY =
-  process.env.HMAC_SECRET_KEY ||
-  "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+  process.env.HMAC_SECRET_KEY;
 
 app.use(cors());
 app.use(express.json());
