@@ -722,10 +722,18 @@
                     </svg>
                   </div>
                   <div>
-                    <h3
-                      class="text-base font-bold text-white tracking-wide"
-                      x-text="dev.device_id"
-                    ></h3>
+                    <div class="flex items-center gap-2">
+                      <h3
+                        class="text-base font-bold text-white tracking-wide"
+                        x-text="dev.device_id"
+                      ></h3>
+                      <template x-if="dev.temperature != null">
+                        <span class="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 text-[10px] font-bold rounded-md border border-cyan-500/20 tracking-wide flex items-center gap-1">
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                          <span x-text="(dev.temperature != null ? dev.temperature.toFixed(1) : '--') + '°C'"></span>
+                        </span>
+                      </template>
+                    </div>
                     <div class="text-[11px] font-mono text-slate-500 mt-0.5">
                       <span x-text="dev.device_ip || 'No IP'"></span> • Seen
                       <span x-text="formatSecondsAgo(dev.seconds_ago)"></span>
@@ -933,6 +941,33 @@
                     <div class="toggle-thumb"></div>
                   </div>
                 </div>
+
+                <!-- Mute target checkboxes -->
+                <div class="flex items-center gap-5 mb-3">
+                  <label class="flex items-center gap-2 cursor-pointer select-none group">
+                    <input
+                      type="checkbox"
+                      x-model="dev.sm.mute_sirene"
+                      class="accent-red-500 w-3.5 h-3.5 rounded"
+                    />
+                    <span class="text-[11px] font-semibold text-slate-400 group-hover:text-slate-200 transition-colors flex items-center gap-1.5">
+                      <svg class="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path></svg>
+                      Mute Sirene
+                    </span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer select-none group">
+                    <input
+                      type="checkbox"
+                      x-model="dev.sm.mute_rotator"
+                      class="accent-blue-500 w-3.5 h-3.5 rounded"
+                    />
+                    <span class="text-[11px] font-semibold text-slate-400 group-hover:text-slate-200 transition-colors flex items-center gap-1.5">
+                      <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                      Mute Rotator
+                    </span>
+                  </label>
+                </div>
+
                 <div class="flex items-center gap-3">
                   <div class="flex-1">
                     <input
@@ -969,6 +1004,47 @@
                     </svg>
                   </button>
                 </div>
+              </div>
+
+              <!-- LCD Message Section -->
+              <div class="px-6 py-4 bg-surface/40 border-t border-borderDim">
+                <div class="flex items-center gap-2 mb-3">
+                  <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                  <span class="text-xs font-semibold text-slate-300">LCD Message</span>
+                  <template x-if="dev.lcd_message">
+                    <span class="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[9px] font-bold rounded border border-emerald-500/20">ACTIVE</span>
+                  </template>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="text"
+                    x-model="dev.lcdInput"
+                    maxlength="64"
+                    placeholder="Type message for device LCD..."
+                    class="flex-1 bg-background border border-borderDim rounded-lg px-3 py-2 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-accentBlue transition"
+                    @keydown.enter="saveLcdMessage(dev)"
+                  />
+                  <button
+                    @click="saveLcdMessage(dev)"
+                    class="bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 p-2 rounded-lg transition-colors"
+                    title="Send to LCD"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                  </button>
+                  <button
+                    @click="clearLcdMessage(dev)"
+                    class="bg-surface hover:bg-red-500/10 text-slate-400 hover:text-red-400 border border-borderDim hover:border-red-500/30 p-2 rounded-lg transition-colors"
+                    title="Clear LCD Message"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                  </button>
+                </div>
+                <template x-if="dev.lcd_message">
+                  <div class="mt-2 px-3 py-2 bg-background/60 rounded-lg border border-borderDim">
+                    <div class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Current Message</div>
+                    <div class="text-xs font-mono text-cyan-400" x-text="dev.lcd_message"></div>
+                  </div>
+                </template>
               </div>
 
               <!-- History Dropdown Section -->
@@ -1279,12 +1355,18 @@
                     enabled: false,
                     start_time: "00:00:00",
                     end_time: "00:00:00",
+                    mute_sirene: true,
+                    mute_rotator: false,
                   };
                   // Preserve history state from previous render
                   const existing = this.devices.find(d => d.device_id === dev.device_id);
                   dev.historyOpen = existing ? existing.historyOpen : false;
                   dev.historyData = existing ? existing.historyData : null;
                   dev.historyLoading = existing ? existing.historyLoading : false;
+                  // Preserve LCD input field across refreshes
+                  dev.lcdInput = existing ? existing.lcdInput : (dev.lcd_message || '');
+                  // lcd_message comes from the server via the devices API
+                  dev.lcd_message = dev.lcd_message || null;
                 }
                 this.devices = devData.devices;
               }
@@ -1323,6 +1405,8 @@
                   enabled: !!data.silent_mode.enabled,
                   start_time: data.silent_mode.start_time || "00:00:00",
                   end_time: data.silent_mode.end_time || "00:00:00",
+                  mute_sirene: data.silent_mode.mute_sirene != null ? !!data.silent_mode.mute_sirene : true,
+                  mute_rotator: !!data.silent_mode.mute_rotator,
                 };
               }
             } catch (e) {}
@@ -1340,6 +1424,8 @@
                   enabled: dev.sm.enabled,
                   start_time,
                   end_time,
+                  mute_sirene: dev.sm.mute_sirene,
+                  mute_rotator: dev.sm.mute_rotator,
                 }),
               });
               const data = await res.json();
@@ -1348,6 +1434,8 @@
                   enabled: dev.sm.enabled,
                   start_time,
                   end_time,
+                  mute_sirene: dev.sm.mute_sirene,
+                  mute_rotator: dev.sm.mute_rotator,
                 };
                 showToast(`Silent Mode saved for ${dev.device_id}`, "success");
               } else showToast(`Failed: ${data.message}`, "error");
@@ -1442,6 +1530,46 @@
               showToast('Failed to load history', 'error');
             }
             dev.historyLoading = false;
+          },
+
+          async saveLcdMessage(dev) {
+            const msg = (dev.lcdInput || '').trim();
+            if (!msg) {
+              showToast('Enter a message first', 'warning');
+              return;
+            }
+            try {
+              const res = await fetch(`/api/devices/${dev.device_id}/lcd-message`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lcd_message: msg }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                dev.lcd_message = msg;
+                showToast(`LCD message sent to ${dev.device_id}`, 'success');
+              } else showToast(`Failed: ${data.message}`, 'error');
+            } catch (e) {
+              showToast('Server connection failed', 'error');
+            }
+          },
+
+          async clearLcdMessage(dev) {
+            try {
+              const res = await fetch(`/api/devices/${dev.device_id}/lcd-message`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lcd_message: null }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                dev.lcd_message = null;
+                dev.lcdInput = '';
+                showToast(`LCD message cleared for ${dev.device_id}`, 'success');
+              } else showToast(`Failed: ${data.message}`, 'error');
+            } catch (e) {
+              showToast('Server connection failed', 'error');
+            }
           },
 
           formatSecondsAgo(seconds) {
