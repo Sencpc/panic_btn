@@ -984,6 +984,9 @@
                       class="w-full bg-background border border-borderDim rounded-lg px-3 py-1.5 text-xs font-mono text-slate-300 focus:outline-none focus:border-accentBlue transition"
                     />
                   </div>
+                  <template x-if="hasUnsavedSilentMode(dev)">
+                    <span class="text-[10px] font-bold text-amber-500 uppercase tracking-wider animate-pulse ml-1">Unsaved</span>
+                  </template>
                   <button
                     @click="saveSilentMode(dev)"
                     class="bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 p-1.5 rounded-lg transition-colors"
@@ -1410,6 +1413,18 @@
                 };
               }
             } catch (e) {}
+          },
+
+          hasUnsavedSilentMode(dev) {
+            const cache = this.silentModeCache[dev.device_id];
+            if (!cache || !dev.sm) return false;
+            return (
+              dev.sm.enabled !== cache.enabled ||
+              dev.sm.mute_sirene !== cache.mute_sirene ||
+              dev.sm.mute_rotator !== cache.mute_rotator ||
+              this.toTimeInput(dev.sm.start_time) !== this.toTimeInput(cache.start_time) ||
+              this.toTimeInput(dev.sm.end_time) !== this.toTimeInput(cache.end_time)
+            );
           },
 
           async saveSilentMode(dev) {

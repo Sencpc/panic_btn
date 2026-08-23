@@ -189,9 +189,9 @@ void updateLCD(double temp) {
         row1[i] = ' ';
     }
 
-    // Advance scroll every 350ms
+    // Advance scroll every 300ms (0.3 second)
     unsigned long now = millis();
-    if (now - lastScrollT >= 350UL) {
+    if (now - lastScrollT >= 300UL) {
       lastScrollT = now;
       lcdScrollPos++;
       if (lcdScrollPos >= (int8_t)totalLen) lcdScrollPos = 0;
