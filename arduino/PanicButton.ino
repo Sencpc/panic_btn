@@ -4,7 +4,7 @@
 #include <Ethernet.h>
 #include <LiquidCrystal_I2C.h>
 
-LiquidCrystal_I2C lcd(0x27, 20, 4);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 #define RELAY_ON  LOW
 #define RELAY_OFF HIGH
@@ -22,19 +22,19 @@ IPAddress myDns(1, 1, 1, 1);
 IPAddress gateway(192, 168, 0, 1);
 IPAddress subnet(255, 255, 255, 0);
 
-const char serverName[] PROGMEM = "panama-api.smartbid.co.id";
+const char serverName[] PROGMEM = "sakura.proxy.rlwy.net";
 char serverNameBuf[26];  // RAM copy for Ethernet
-const int serverPort = 80;
+const int serverPort = 27373;
 EthernetClient client;
 
 const char DEVICE_ID[] PROGMEM = "ARDPB0011";
 char devIdBuf[10];  // RAM copy
 
 const uint8_t SECRET_KEY[32] PROGMEM = {
-  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-  0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-  0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20
+  0x5f, 0x10, 0xdd, 0xa8, 0xfe, 0x51, 0x4d, 0x04,
+  0xfb, 0x0b, 0x27, 0xb2, 0x79, 0xd3, 0xac, 0xe2,
+  0xa2, 0xb9, 0x5c, 0x3c, 0x7e, 0x35, 0x4d, 0x6b,
+  0x06, 0xdc, 0x81, 0xdc, 0xe7, 0x80, 0xa1, 0x24
 };
 
 uint8_t I2C_ADDRESS = 0x76;
@@ -43,10 +43,21 @@ BMP280_Sensor bmp280(I2C_ADDRESS, &Wire, I2C_BUS_SPEED);
 
 unsigned long lastHB = 0;
 bool isPanic = false;
-bool isSilent = false;
+bool muteSirene = false;
+bool muteRotator = false;
 bool resetLocked = false;
 uint8_t failCount = 0;
 bool srvDown = false;
+
+// --- LCD display state ---
+char lcdMsg[64];            // Current message for row 1
+char lcdSrvMsg[64];         // Server-sent message (low priority)
+uint8_t lcdMsgLen = 0;      // Cached strlen of lcdMsg
+int8_t  lcdScrollPos = 0;   // Current scroll offset
+unsigned long lastScrollT = 0;
+char lcdPrevRow0[17];       // Previous row 0 content (flicker prevention)
+char lcdPrevRow1[17];       // Previous row 1 content (flicker prevention)
+double lastTemp = 0.0;      // Cached temperature for LCD
 
 // --- Helpers to save flash ---
 
@@ -86,6 +97,116 @@ static void setAlarmOutputs(uint8_t red, uint8_t yel, uint8_t grn, uint8_t sir, 
   digitalWrite(PIN_ROT, rot);
 }
 
+// --- LCD functions ---
+
+// Set a new LCD message and reset scroll position
+void setLcdMessage(const char* msg) {
+  if (strcmp(lcdMsg, msg) == 0) return;  // No change
+  strncpy(lcdMsg, msg, sizeof(lcdMsg) - 1);
+  lcdMsg[sizeof(lcdMsg) - 1] = '\0';
+  lcdMsgLen = strlen(lcdMsg);
+  lcdScrollPos = 0;
+  lastScrollT = millis();
+}
+
+// Set LCD message from PROGMEM
+void setLcdMessage_P(const char* pmsg) {
+  char tmp[64];
+  strncpy_P(tmp, pmsg, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+  setLcdMessage(tmp);
+}
+
+// Determine the current message based on system state priorities
+void refreshLcdMessage() {
+  if (isPanic) {
+    setLcdMessage_P(PSTR("!! EMERGENCY ACTIVE !!"));
+  } else if (srvDown) {
+    setLcdMessage_P(PSTR("Server disconnected!"));
+  } else if (digitalRead(PIN_BTN) == HIGH) {
+    setLcdMessage_P(PSTR("BTN circuit OPEN!"));
+  } else if (muteSirene && muteRotator) {
+    setLcdMessage_P(PSTR("Mute: SIR + ROT"));
+  } else if (muteSirene) {
+    setLcdMessage_P(PSTR("Mute: Sirene"));
+  } else if (muteRotator) {
+    setLcdMessage_P(PSTR("Mute: Rotator"));
+  } else if (lcdSrvMsg[0] != '\0') {
+    setLcdMessage(lcdSrvMsg);
+  } else {
+    setLcdMessage_P(PSTR("System OK - Online"));
+  }
+}
+
+// Update the LCD display — called every loop iteration
+void updateLCD(double temp) {
+  char row0[17];
+  char row1[17];
+
+  // --- Build Row 0: "XX.X\xDF C  STATUS" ---
+  // Temperature left side (cols 0-6): "XX.X\xDFC" (degree symbol + C)
+  char tbuf[7];
+  dtostrf(temp, 4, 1, tbuf);  // e.g. "28.5"
+  // Build row0 with spaces
+  memset(row0, ' ', 16);
+  row0[16] = '\0';
+  // Copy temp digits
+  uint8_t tlen = strlen(tbuf);
+  memcpy(row0, tbuf, tlen);
+  row0[tlen] = '\xDF';      // degree symbol
+  row0[tlen + 1] = 'C';
+
+  // Status right side (cols 8-15)
+  const char* stat;
+  if (isPanic)        stat = "!!PANIC";
+  else if (srvDown)   stat = "NO SRVR";
+  else if (muteSirene || muteRotator)  stat = " SILENT";
+  else                stat = " NORMAL";
+  // Right-align status into cols 9-15 (7 chars)
+  uint8_t slen = strlen(stat);
+  memcpy(row0 + 16 - slen, stat, slen);
+
+  // --- Build Row 1: message (with scrolling if needed) ---
+  memset(row1, ' ', 16);
+  row1[16] = '\0';
+
+  if (lcdMsgLen <= 16) {
+    // Static — center or left-align
+    memcpy(row1, lcdMsg, lcdMsgLen);
+  } else {
+    // Scrolling: show 16-char window from lcdScrollPos
+    // We pad the message with 4 trailing spaces for visual gap
+    uint8_t totalLen = lcdMsgLen + 4;  // message + gap
+    for (uint8_t i = 0; i < 16; i++) {
+      uint8_t idx = (lcdScrollPos + i) % totalLen;
+      if (idx < lcdMsgLen)
+        row1[i] = lcdMsg[idx];
+      else
+        row1[i] = ' ';
+    }
+
+    // Advance scroll every 350ms
+    unsigned long now = millis();
+    if (now - lastScrollT >= 350UL) {
+      lastScrollT = now;
+      lcdScrollPos++;
+      if (lcdScrollPos >= (int8_t)totalLen) lcdScrollPos = 0;
+    }
+  }
+
+  // --- Write to LCD only if content changed (prevents flicker) ---
+  if (memcmp(lcdPrevRow0, row0, 16) != 0) {
+    lcd.setCursor(0, 0);
+    lcd.print(row0);
+    memcpy(lcdPrevRow0, row0, 16);
+  }
+  if (memcmp(lcdPrevRow1, row1, 16) != 0) {
+    lcd.setCursor(0, 1);
+    lcd.print(row1);
+    memcpy(lcdPrevRow1, row1, 16);
+  }
+}
+
 void setup() {
   pinMode(PIN_BTN, INPUT_PULLUP);
   pinMode(PIN_BTN2, INPUT_PULLUP);
@@ -102,51 +223,74 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
+  // Initialize LCD state
+  memset(lcdMsg, 0, sizeof(lcdMsg));
+  memset(lcdSrvMsg, 0, sizeof(lcdSrvMsg));
+  memset(lcdPrevRow0, 0, sizeof(lcdPrevRow0));
+  memset(lcdPrevRow1, 0, sizeof(lcdPrevRow1));
+  setLcdMessage_P(PSTR("Initializing..."));
+
+  // Show boot message
+  lcd.setCursor(0, 0);
+  lcd.print(F("PanicButton v2"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("Booting..."));
+
   // Copy PROGMEM strings to RAM buffers (needed by Ethernet/SHA libs)
   strcpy_P(serverNameBuf, serverName);
   strcpy_P(devIdBuf, DEVICE_ID);
 
+  // Ethernet CS must be set early to prevent W5500 SPI conflicts
+  Ethernet.init(10);
   Serial.begin(9600);
 
   while (!bmp280.InitSensor()) {
     delay(3000);
     Serial.println(F("BMP280 not found"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("BMP280 ERROR!   "));
   }
   Serial.print(F("ChipID:0x"));
   Serial.println(bmp280.readForChipID(), HEX);
   delay(2000);
 
-  Ethernet.init(10);
-
   Serial.println(F("Init Eth"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("Init Ethernet..."));
+
   if (Ethernet.begin(mac) == 0) {
     if (Ethernet.hardwareStatus() == EthernetNoHardware) {
       digitalWrite(PIN_RED, RELAY_ON);
       digitalWrite(PIN_GRN, RELAY_OFF);
+      lcd.setCursor(0, 1);
+      lcd.print(F("No ETH Hardware!"));
     }
     Ethernet.begin(mac, ip, myDns, gateway, subnet);
   }
 
   Serial.print(F("IP:"));
   Serial.println(Ethernet.localIP());
+  Serial.print(F("Srv:"));
+  Serial.println(serverNameBuf);
 
   delay(1000);
   randomSeed(analogRead(A2));
+
+  // Clear boot screen and set initial message
+  lcd.clear();
+  setLcdMessage_P(PSTR("System OK - Online"));
 }
 
 void loop() {
   bool btnState = digitalRead(PIN_BTN);
   double temp = bmp280.readTemperature();
+  lastTemp = temp;
   delay(50);
 
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(F("Temp:"));
-  lcd.setCursor(0, 1);
-  // Use dtostrf instead of String() — saves ~1.6KB flash
-  char tbuf[8];
-  dtostrf(temp, 4, 2, tbuf);
-  lcd.print(tbuf);
+  // Refresh the priority-based LCD message
+  refreshLcdMessage();
+  // Update the LCD display (no flicker — only writes changed content)
+  updateLCD(temp);
 
   if (btnState == LOW && resetLocked) {
     resetLocked = false;
@@ -182,8 +326,8 @@ void triggerPanicON() {
 
   digitalWrite(PIN_GRN, RELAY_OFF);
   digitalWrite(PIN_YEL, RELAY_ON);
-  digitalWrite(PIN_ROT, RELAY_ON);
-  if (!isSilent) digitalWrite(PIN_SIR, RELAY_ON);
+  if (!muteRotator) digitalWrite(PIN_ROT, RELAY_ON);
+  if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
 
   sendApiRequest(PSTR("/api/panic"), false);
 }
@@ -224,6 +368,11 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
     p = appendBool(p, digitalRead(PIN_ROT) == RELAY_ON);
     p = appendP(p, PSTR(",\"panic_state\":"));
     p = appendBool(p, isPanic);
+    // Append temperature reading
+    p = appendP(p, PSTR(",\"temperature\":"));
+    char tempBuf[8];
+    dtostrf(lastTemp, 4, 2, tempBuf);
+    p = appendR(p, tempBuf);
     *p++ = '}'; *p = '\0';
   } else {
     p = appendP(p, PSTR("\",\"status\":\"panic\",\"timestamp\":"));
@@ -302,18 +451,41 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
         isPanic = true;
         digitalWrite(PIN_GRN, RELAY_OFF);
         digitalWrite(PIN_YEL, RELAY_ON);
-        digitalWrite(PIN_ROT, RELAY_ON);
-        if (!isSilent) digitalWrite(PIN_SIR, RELAY_ON);
+        if (!muteRotator) digitalWrite(PIN_ROT, RELAY_ON);
+        if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
       }
 
-      // Parse silent mode
-      if (strstr_P(buf, PSTR("\"is_active\":true"))) {
-        isSilent = true;
+      // Parse granular silent mode mute flags
+      if (strstr_P(buf, PSTR("\"mute_sirene\":true"))) {
+        muteSirene = true;
         if (isPanic) digitalWrite(PIN_SIR, RELAY_OFF);
-      }
-      else if (strstr_P(buf, PSTR("\"is_active\":false"))) {
-        isSilent = false;
+      } else if (strstr_P(buf, PSTR("\"mute_sirene\":false"))) {
+        muteSirene = false;
         if (isPanic) digitalWrite(PIN_SIR, RELAY_ON);
+      }
+
+      if (strstr_P(buf, PSTR("\"mute_rotator\":true"))) {
+        muteRotator = true;
+        if (isPanic) digitalWrite(PIN_ROT, RELAY_OFF);
+      } else if (strstr_P(buf, PSTR("\"mute_rotator\":false"))) {
+        muteRotator = false;
+        if (isPanic) digitalWrite(PIN_ROT, RELAY_ON);
+      }
+
+      // Parse LCD message from server
+      {
+        const char* lcdKey = strstr_P(buf, PSTR("\"lcd_message\":\""));
+        if (lcdKey) {
+          lcdKey += 15;  // skip past "lcd_message":"
+          char* endQuote = strchr(lcdKey, '"');
+          if (endQuote && (endQuote - lcdKey) < (int)sizeof(lcdSrvMsg)) {
+            uint8_t mlen = endQuote - lcdKey;
+            memcpy(lcdSrvMsg, lcdKey, mlen);
+            lcdSrvMsg[mlen] = '\0';
+          }
+        } else if (strstr_P(buf, PSTR("\"lcd_message\":null"))) {
+          lcdSrvMsg[0] = '\0';  // Clear server message
+        }
       }
     }
 
@@ -328,4 +500,7 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
       }
     }
   }
+
+  // Always refresh LCD message after API call (state may have changed)
+  refreshLcdMessage();
 }

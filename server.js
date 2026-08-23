@@ -7,9 +7,7 @@ const path = require("path");
 const app = express();
 const PORT = 3000;
 
-// Default Secret Key (Matches Arduino)
-const HMAC_SECRET_KEY =
-  process.env.HMAC_SECRET_KEY;
+const HMAC_SECRET_KEY = process.env.HMAC_SECRET_KEY;
 
 app.use(cors());
 app.use(express.json());
@@ -103,7 +101,34 @@ async function initDB() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // --- Migrations: add columns if they don't exist ---
+    try {
+      await pool.query(`ALTER TABLE heartbeats ADD COLUMN temperature FLOAT DEFAULT NULL`);
+      console.log("Added temperature column to heartbeats.");
+    } catch (e) {
+      if (!e.message.includes('Duplicate column')) throw e;
+    }
 
+    try {
+      await pool.query(`ALTER TABLE devices ADD COLUMN lcd_message VARCHAR(64) DEFAULT NULL`);
+      console.log("Added lcd_message column to devices.");
+    } catch (e) {
+      if (!e.message.includes('Duplicate column')) throw e;
+    }
+
+    try {
+      await pool.query(`ALTER TABLE silent_mode_settings ADD COLUMN mute_sirene INT DEFAULT 1`);
+      console.log("Added mute_sirene column to silent_mode_settings.");
+    } catch (e) {
+      if (!e.message.includes('Duplicate column')) throw e;
+    }
+
+    try {
+      await pool.query(`ALTER TABLE silent_mode_settings ADD COLUMN mute_rotator INT DEFAULT 0`);
+      console.log("Added mute_rotator column to silent_mode_settings.");
+    } catch (e) {
+      if (!e.message.includes('Duplicate column')) throw e;
+    }
 
     console.log("Connected to MySQL database and initialized tables.");
   } catch (err) {
@@ -149,6 +174,8 @@ async function getSilentMode(deviceId) {
     enabled: false,
     start_time: "00:00:00",
     end_time: "00:00:00",
+    mute_sirene: true,
+    mute_rotator: false,
   };
   let isActive = false;
 
@@ -157,6 +184,8 @@ async function getSilentMode(deviceId) {
       enabled: !!rows[0].enabled,
       start_time: rows[0].start_time,
       end_time: rows[0].end_time,
+      mute_sirene: !!rows[0].mute_sirene,
+      mute_rotator: !!rows[0].mute_rotator,
     };
 
     if (settings.enabled) {
@@ -175,7 +204,13 @@ async function getSilentMode(deviceId) {
     }
   }
 
-  return { ...settings, is_active: isActive };
+  return {
+    ...settings,
+    is_active: isActive,
+    // Effective mute flags: only true when silent mode is currently active
+    mute_sirene: isActive && settings.mute_sirene,
+    mute_rotator: isActive && settings.mute_rotator,
+  };
 }
 
 async function getHeartbeatInterval(deviceId) {
@@ -195,7 +230,9 @@ async function getAndConsumeCommand(deviceId) {
     [deviceId],
   );
   // Delete ALL queued commands for this device (prevents stacking)
-  await pool.query(`DELETE FROM device_commands WHERE device_id = ?`, [deviceId]);
+  await pool.query(`DELETE FROM device_commands WHERE device_id = ?`, [
+    deviceId,
+  ]);
   if (rows.length > 0) {
     return rows[0].command;
   }
@@ -293,6 +330,7 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
     sirene,
     rotator,
     panic_state,
+    temperature,
   } = req.body;
 
   if (!device_id)
@@ -313,8 +351,8 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         device_id,
         timestamp || 0,
@@ -326,12 +364,20 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
         sirene ? 1 : 0,
         rotator ? 1 : 0,
         panic_state ? 1 : 0,
+        temperature != null ? temperature : null,
       ],
     );
 
     const silentMode = await getSilentMode(device_id);
     const heartbeatInterval = await getHeartbeatInterval(device_id);
     const command = await getAndConsumeCommand(device_id);
+
+    // Fetch LCD message for this device
+    const [lcdRows] = await pool.query(
+      `SELECT lcd_message FROM devices WHERE device_id = ?`,
+      [device_id],
+    );
+    const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
       command,
@@ -342,6 +388,7 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
       server_time_gmt7: getServerTimeGMT7(),
       silent_mode: silentMode,
       heartbeat_interval: heartbeatInterval,
+      lcd_message: lcdMessage,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -359,6 +406,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
     sirene,
     rotator,
     panic_state,
+    temperature,
   } = req.body;
 
   if (!device_id)
@@ -375,8 +423,8 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         device_id,
         timestamp || 0,
@@ -388,6 +436,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
         sirene ? 1 : 0,
         rotator ? 1 : 0,
         panic_state ? 1 : 0,
+        temperature != null ? temperature : null,
       ],
     );
 
@@ -400,6 +449,13 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
     const heartbeatInterval = await getHeartbeatInterval(device_id);
     const command = await getAndConsumeCommand(device_id);
 
+    // Fetch LCD message for this device
+    const [lcdRows] = await pool.query(
+      `SELECT lcd_message FROM devices WHERE device_id = ?`,
+      [device_id],
+    );
+    const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
+
     res.json({
       success: true,
       message: "Panic event received",
@@ -409,6 +465,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
       silent_mode: silentMode,
       heartbeat_interval: heartbeatInterval,
       command,
+      lcd_message: lcdMessage,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -426,6 +483,7 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
     sirene,
     rotator,
     panic_state,
+    temperature,
   } = req.body;
 
   if (!device_id)
@@ -442,8 +500,8 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         device_id,
         timestamp || 0,
@@ -455,6 +513,7 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
         sirene ? 1 : 0,
         rotator ? 1 : 0,
         panic_state ? 1 : 0,
+        temperature != null ? temperature : null,
       ],
     );
 
@@ -467,6 +526,13 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
     const heartbeatInterval = await getHeartbeatInterval(device_id);
     const command = await getAndConsumeCommand(device_id);
 
+    // Fetch LCD message for this device
+    const [lcdRows] = await pool.query(
+      `SELECT lcd_message FROM devices WHERE device_id = ?`,
+      [device_id],
+    );
+    const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
+
     res.json({
       success: true,
       message: "Panic OFF received",
@@ -476,6 +542,7 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
       silent_mode: silentMode,
       heartbeat_interval: heartbeatInterval,
       command,
+      lcd_message: lcdMessage,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -491,10 +558,10 @@ app.get("/api/devices", async (req, res) => {
     const [rows] = await pool.query(`
       SELECT d.*, 
       TIMESTAMPDIFF(SECOND, d.last_seen, NOW()) as seconds_ago,
-      h.led_red, h.led_yellow, h.led_green, h.sirene, h.rotator, h.panic_button, h.panic_state
+      h.led_red, h.led_yellow, h.led_green, h.sirene, h.rotator, h.panic_button, h.panic_state, h.temperature
       FROM devices d
       LEFT JOIN (
-          SELECT device_id, led_red, led_yellow, led_green, sirene, rotator, panic_button, panic_state
+          SELECT device_id, led_red, led_yellow, led_green, sirene, rotator, panic_button, panic_state, temperature
           FROM heartbeats h1
           WHERE id = (SELECT MAX(id) FROM heartbeats h2 WHERE h1.device_id = h2.device_id)
       ) h ON d.device_id = h.device_id
@@ -645,13 +712,17 @@ app.get("/api/heartbeat/history/:device_id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.post("/api/silent-mode", async (req, res) => {
-  const { device_id, enabled, start_time, end_time } = req.body;
+  const { device_id, enabled, start_time, end_time, mute_sirene, mute_rotator } = req.body;
 
   if (!device_id || enabled === undefined || !start_time || !end_time) {
     return res
       .status(400)
       .json({ success: false, message: "Missing required fields" });
   }
+
+  // Default: mute sirene = true, mute rotator = false (backward compatible)
+  const muteSir = mute_sirene !== undefined ? (mute_sirene ? 1 : 0) : 1;
+  const muteRot = mute_rotator !== undefined ? (mute_rotator ? 1 : 0) : 0;
 
   try {
     await pool.query(
@@ -660,10 +731,10 @@ app.post("/api/silent-mode", async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO silent_mode_settings (device_id, enabled, start_time, end_time, updated_at)
-       VALUES (?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), start_time=VALUES(start_time), end_time=VALUES(end_time), updated_at=NOW()`,
-      [device_id, enabled ? 1 : 0, start_time, end_time],
+      `INSERT INTO silent_mode_settings (device_id, enabled, start_time, end_time, mute_sirene, mute_rotator, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), start_time=VALUES(start_time), end_time=VALUES(end_time), mute_sirene=VALUES(mute_sirene), mute_rotator=VALUES(mute_rotator), updated_at=NOW()`,
+      [device_id, enabled ? 1 : 0, start_time, end_time, muteSir, muteRot],
     );
 
     res.json({
@@ -674,6 +745,8 @@ app.post("/api/silent-mode", async (req, res) => {
         enabled: enabled ? 1 : 0,
         start_time,
         end_time,
+        mute_sirene: muteSir,
+        mute_rotator: muteRot,
       },
     });
   } catch (err) {
@@ -727,10 +800,18 @@ app.patch("/api/silent-mode/:device_id", async (req, res) => {
         : rows[0].enabled;
     const start_time = updates.start_time || rows[0].start_time;
     const end_time = updates.end_time || rows[0].end_time;
+    const mute_sirene =
+      updates.mute_sirene !== undefined
+        ? updates.mute_sirene ? 1 : 0
+        : rows[0].mute_sirene;
+    const mute_rotator =
+      updates.mute_rotator !== undefined
+        ? updates.mute_rotator ? 1 : 0
+        : rows[0].mute_rotator;
 
     await pool.query(
-      `UPDATE silent_mode_settings SET enabled = ?, start_time = ?, end_time = ? WHERE device_id = ?`,
-      [enabled, start_time, end_time, device_id],
+      `UPDATE silent_mode_settings SET enabled = ?, start_time = ?, end_time = ?, mute_sirene = ?, mute_rotator = ? WHERE device_id = ?`,
+      [enabled, start_time, end_time, mute_sirene, mute_rotator, device_id],
     );
 
     const [updated] = await pool.query(
@@ -819,6 +900,68 @@ app.patch("/api/heartbeat-interval/:device_id", async (req, res) => {
       success: true,
       message: `Heartbeat interval updated`,
       heartbeat_interval: updated[0],
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// LCD MESSAGE ENDPOINT
+// ═══════════════════════════════════════════════════════════════════
+
+app.patch("/api/devices/:device_id/lcd-message", async (req, res) => {
+  const { device_id } = req.params;
+  const { lcd_message } = req.body;
+
+  try {
+    const [devices] = await pool.query(
+      `SELECT * FROM devices WHERE device_id = ?`,
+      [device_id],
+    );
+    if (devices.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Device not found" });
+    }
+
+    // lcd_message can be null to clear, or a string (max 64 chars)
+    const msg = lcd_message ? String(lcd_message).substring(0, 64) : null;
+
+    await pool.query(
+      `UPDATE devices SET lcd_message = ? WHERE device_id = ?`,
+      [msg, device_id],
+    );
+
+    res.json({
+      success: true,
+      message: msg ? "LCD message set" : "LCD message cleared",
+      device_id,
+      lcd_message: msg,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/devices/:device_id/lcd-message", async (req, res) => {
+  const { device_id } = req.params;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT lcd_message FROM devices WHERE device_id = ?`,
+      [device_id],
+    );
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Device not found" });
+    }
+
+    res.json({
+      success: true,
+      device_id,
+      lcd_message: rows[0].lcd_message,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
