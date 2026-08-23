@@ -103,31 +103,39 @@ async function initDB() {
 
     // --- Migrations: add columns if they don't exist ---
     try {
-      await pool.query(`ALTER TABLE heartbeats ADD COLUMN temperature FLOAT DEFAULT NULL`);
+      await pool.query(
+        `ALTER TABLE heartbeats ADD COLUMN temperature FLOAT DEFAULT NULL`,
+      );
       console.log("Added temperature column to heartbeats.");
     } catch (e) {
-      if (!e.message.includes('Duplicate column')) throw e;
+      if (!e.message.includes("Duplicate column")) throw e;
     }
 
     try {
-      await pool.query(`ALTER TABLE devices ADD COLUMN lcd_message VARCHAR(64) DEFAULT NULL`);
+      await pool.query(
+        `ALTER TABLE devices ADD COLUMN lcd_message VARCHAR(64) DEFAULT NULL`,
+      );
       console.log("Added lcd_message column to devices.");
     } catch (e) {
-      if (!e.message.includes('Duplicate column')) throw e;
+      if (!e.message.includes("Duplicate column")) throw e;
     }
 
     try {
-      await pool.query(`ALTER TABLE silent_mode_settings ADD COLUMN mute_sirene INT DEFAULT 1`);
+      await pool.query(
+        `ALTER TABLE silent_mode_settings ADD COLUMN mute_sirene INT DEFAULT 1`,
+      );
       console.log("Added mute_sirene column to silent_mode_settings.");
     } catch (e) {
-      if (!e.message.includes('Duplicate column')) throw e;
+      if (!e.message.includes("Duplicate column")) throw e;
     }
 
     try {
-      await pool.query(`ALTER TABLE silent_mode_settings ADD COLUMN mute_rotator INT DEFAULT 0`);
+      await pool.query(
+        `ALTER TABLE silent_mode_settings ADD COLUMN mute_rotator INT DEFAULT 0`,
+      );
       console.log("Added mute_rotator column to silent_mode_settings.");
     } catch (e) {
-      if (!e.message.includes('Duplicate column')) throw e;
+      if (!e.message.includes("Duplicate column")) throw e;
     }
 
     console.log("Connected to MySQL database and initialized tables.");
@@ -379,7 +387,7 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
     const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
-      cmd: command === "reset" ? "rst" : (command === "panic" ? "pnc" : null),
+      cmd: command === "reset" ? "rst" : command === "panic" ? "pnc" : null,
       ms: silentMode.mute_sirene,
       mr: silentMode.mute_rotator,
       lcd: lcdMessage,
@@ -450,7 +458,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
     const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
-      cmd: command === "reset" ? "rst" : (command === "panic" ? "pnc" : null),
+      cmd: command === "reset" ? "rst" : command === "panic" ? "pnc" : null,
       ms: silentMode.mute_sirene,
       mr: silentMode.mute_rotator,
       lcd: lcdMessage,
@@ -521,7 +529,7 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
     const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
-      cmd: command === "reset" ? "rst" : (command === "panic" ? "pnc" : null),
+      cmd: command === "reset" ? "rst" : command === "panic" ? "pnc" : null,
       ms: silentMode.mute_sirene,
       mr: silentMode.mute_rotator,
       lcd: lcdMessage,
@@ -694,7 +702,14 @@ app.get("/api/heartbeat/history/:device_id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.post("/api/silent-mode", async (req, res) => {
-  const { device_id, enabled, start_time, end_time, mute_sirene, mute_rotator } = req.body;
+  const {
+    device_id,
+    enabled,
+    start_time,
+    end_time,
+    mute_sirene,
+    mute_rotator,
+  } = req.body;
 
   if (!device_id || enabled === undefined || !start_time || !end_time) {
     return res
@@ -784,11 +799,15 @@ app.patch("/api/silent-mode/:device_id", async (req, res) => {
     const end_time = updates.end_time || rows[0].end_time;
     const mute_sirene =
       updates.mute_sirene !== undefined
-        ? updates.mute_sirene ? 1 : 0
+        ? updates.mute_sirene
+          ? 1
+          : 0
         : rows[0].mute_sirene;
     const mute_rotator =
       updates.mute_rotator !== undefined
-        ? updates.mute_rotator ? 1 : 0
+        ? updates.mute_rotator
+          ? 1
+          : 0
         : rows[0].mute_rotator;
 
     await pool.query(
@@ -910,10 +929,10 @@ app.patch("/api/devices/:device_id/lcd-message", async (req, res) => {
     // lcd_message can be null to clear, or a string (max 64 chars)
     const msg = lcd_message ? String(lcd_message).substring(0, 64) : null;
 
-    await pool.query(
-      `UPDATE devices SET lcd_message = ? WHERE device_id = ?`,
-      [msg, device_id],
-    );
+    await pool.query(`UPDATE devices SET lcd_message = ? WHERE device_id = ?`, [
+      msg,
+      device_id,
+    ]);
 
     res.json({
       success: true,
