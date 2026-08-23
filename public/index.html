@@ -1438,7 +1438,7 @@
                   mute_rotator: dev.sm.mute_rotator,
                 };
                 showToast(`Silent Mode saved for ${dev.device_id}`, "success");
-              } else showToast(`Failed: ${data.message}`, "error");
+              } else showToast(`Failed: ${data.message || data.error}`, "error");
             } catch (e) {
               showToast("Server connection failed", "error");
             }
@@ -1601,7 +1601,8 @@
           },
 
           toTimeAPI(val) {
-            return !val ? "00:00:00" : val + ":00";
+            if (!val) return "00:00:00";
+            return val.length === 5 ? val + ":00" : val;
           },
         }));
       });
