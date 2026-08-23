@@ -320,18 +320,17 @@ const verifyHMAC = async (req, res, next) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
-  const {
-    device_id,
-    timestamp,
-    led_red,
-    led_yellow,
-    led_green,
-    panic_button,
-    sirene,
-    rotator,
-    panic_state,
-    temperature,
-  } = req.body;
+  const { id, ts, r, y, g, pb, sir, rot, ps, t } = req.body;
+  const device_id = id;
+  const timestamp = ts;
+  const led_red = r;
+  const led_yellow = y;
+  const led_green = g;
+  const panic_button = pb;
+  const sirene = sir;
+  const rotator = rot;
+  const panic_state = ps;
+  const temperature = t;
 
   if (!device_id)
     return res
@@ -380,15 +379,10 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
     const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
-      command,
-      success: true,
-      message: "Heartbeat received",
-      device_id,
-      status: "online",
-      server_time_gmt7: getServerTimeGMT7(),
-      silent_mode: silentMode,
-      heartbeat_interval: heartbeatInterval,
-      lcd_message: lcdMessage,
+      cmd: command === "reset" ? "rst" : (command === "panic" ? "pnc" : null),
+      ms: silentMode.mute_sirene,
+      mr: silentMode.mute_rotator,
+      lcd: lcdMessage,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -396,18 +390,17 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
 });
 
 app.post("/api/panic", verifyHMAC, async (req, res) => {
-  const {
-    device_id,
-    timestamp,
-    led_red,
-    led_yellow,
-    led_green,
-    panic_button,
-    sirene,
-    rotator,
-    panic_state,
-    temperature,
-  } = req.body;
+  const { id, ts, r, y, g, pb, sir, rot, ps, t } = req.body;
+  const device_id = id;
+  const timestamp = ts;
+  const led_red = r;
+  const led_yellow = y;
+  const led_green = g;
+  const panic_button = pb;
+  const sirene = sir;
+  const rotator = rot;
+  const panic_state = ps;
+  const temperature = t;
 
   if (!device_id)
     return res
@@ -457,15 +450,10 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
     const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
-      success: true,
-      message: "Panic event received",
-      event_id: result.insertId,
-      device_id,
-      server_time_gmt7: getServerTimeGMT7(),
-      silent_mode: silentMode,
-      heartbeat_interval: heartbeatInterval,
-      command,
-      lcd_message: lcdMessage,
+      cmd: command === "reset" ? "rst" : (command === "panic" ? "pnc" : null),
+      ms: silentMode.mute_sirene,
+      mr: silentMode.mute_rotator,
+      lcd: lcdMessage,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -473,18 +461,17 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
 });
 
 app.post("/api/panicoff", verifyHMAC, async (req, res) => {
-  const {
-    device_id,
-    timestamp,
-    led_red,
-    led_yellow,
-    led_green,
-    panic_button,
-    sirene,
-    rotator,
-    panic_state,
-    temperature,
-  } = req.body;
+  const { id, ts, r, y, g, pb, sir, rot, ps, t } = req.body;
+  const device_id = id;
+  const timestamp = ts;
+  const led_red = r;
+  const led_yellow = y;
+  const led_green = g;
+  const panic_button = pb;
+  const sirene = sir;
+  const rotator = rot;
+  const panic_state = ps;
+  const temperature = t;
 
   if (!device_id)
     return res
@@ -534,15 +521,10 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
     const lcdMessage = lcdRows.length > 0 ? lcdRows[0].lcd_message : null;
 
     res.json({
-      success: true,
-      message: "Panic OFF received",
-      event_id: result.insertId,
-      device_id,
-      server_time_gmt7: getServerTimeGMT7(),
-      silent_mode: silentMode,
-      heartbeat_interval: heartbeatInterval,
-      command,
-      lcd_message: lcdMessage,
+      cmd: command === "reset" ? "rst" : (command === "panic" ? "pnc" : null),
+      ms: silentMode.mute_sirene,
+      mr: silentMode.mute_rotator,
+      lcd: lcdMessage,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

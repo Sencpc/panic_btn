@@ -58,6 +58,8 @@ unsigned long lastScrollT = 0;
 char lcdPrevRow0[17];       // Previous row 0 content (flicker prevention)
 char lcdPrevRow1[17];       // Previous row 1 content (flicker prevention)
 double lastTemp = 0.0;      // Cached temperature for LCD
+bool btnOpen = false;       // Debounced PIN_BTN state (true = circuit open)
+bool jackDisconnected = false; // Debounced PIN_BTN2 state (true = 3.5mm jack disconnected)
 
 // --- Helpers to save flash ---
 
@@ -119,20 +121,22 @@ void setLcdMessage_P(const char* pmsg) {
 
 // Determine the current message based on system state priorities
 void refreshLcdMessage() {
-  if (isPanic) {
+  if (jackDisconnected) {
+    setLcdMessage_P(PSTR("Jack Disconnected!"));
+  } else if (isPanic) {
     setLcdMessage_P(PSTR("!! EMERGENCY ACTIVE !!"));
   } else if (srvDown) {
     setLcdMessage_P(PSTR("Server disconnected!"));
-  } else if (digitalRead(PIN_BTN) == HIGH) {
+  } else if (btnOpen) {
     setLcdMessage_P(PSTR("BTN circuit OPEN!"));
+  } else if (lcdSrvMsg[0] != '\0') {
+    setLcdMessage(lcdSrvMsg);
   } else if (muteSirene && muteRotator) {
     setLcdMessage_P(PSTR("Mute: SIR + ROT"));
   } else if (muteSirene) {
     setLcdMessage_P(PSTR("Mute: Sirene"));
   } else if (muteRotator) {
     setLcdMessage_P(PSTR("Mute: Rotator"));
-  } else if (lcdSrvMsg[0] != '\0') {
-    setLcdMessage(lcdSrvMsg);
   } else {
     setLcdMessage_P(PSTR("System OK - Online"));
   }
@@ -282,32 +286,42 @@ void setup() {
 }
 
 void loop() {
+  // Read PIN_BTN (A0) and PIN_BTN2 (A1) directly
   bool btnState = digitalRead(PIN_BTN);
+  bool btn2State = digitalRead(PIN_BTN2);
   double temp = bmp280.readTemperature();
   lastTemp = temp;
-  delay(50);
+
+  btnOpen = (btnState == HIGH);  // Update cached state for LCD
+
+  jackDisconnected = (btn2State == LOW); // LOW indicates jack pulled out / disconnected
+
+  // Control Red LED for jack disconnection
+  if (jackDisconnected) {
+    digitalWrite(PIN_RED, RELAY_ON);
+  } else if (!srvDown && !isPanic) {
+    digitalWrite(PIN_RED, RELAY_OFF);
+  }
 
   // Refresh the priority-based LCD message
   refreshLcdMessage();
   // Update the LCD display (no flicker — only writes changed content)
   updateLCD(temp);
 
-  if (btnState == LOW && resetLocked) {
+  // Only unlock reset if both button circuit is closed and jack is plugged in
+  if (btnState == LOW && !jackDisconnected && resetLocked) {
     resetLocked = false;
   }
 
-  if (btnState == HIGH && !isPanic && !resetLocked) {
+  if (btnOpen && !isPanic && !resetLocked) {
     Serial.println(F("CircuitOPEN-PanicON"));
     triggerPanicON();
   }
 
-  if (digitalRead(PIN_BTN2) == LOW && !isPanic && !resetLocked) {
-    delay(50);
-    if (digitalRead(PIN_BTN2) == LOW) {
-      Serial.println(F("A1-PanicON"));
-      digitalWrite(PIN_RED, RELAY_ON);
-      triggerPanicON();
-    }
+  if (jackDisconnected && !isPanic && !resetLocked) {
+    Serial.println(F("A1-JackPull-PanicON"));
+    digitalWrite(PIN_RED, RELAY_ON);
+    triggerPanicON();
   }
 
   unsigned long now = millis();
@@ -345,37 +359,37 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
   nonce[8] = '\0';
 
   // Build JSON payload manually — avoids large PSTR format string + snprintf
-  char buf[320];
+  char buf[160];
   char* p = buf;
 
-  p = appendP(p, PSTR("{\"device_id\":\""));
+  p = appendP(p, PSTR("{\"id\":\""));
   p = appendR(p, devIdBuf);
 
   if (isHeartbeat) {
-    p = appendP(p, PSTR("\",\"status\":\"heartbeat\",\"timestamp\":"));
+    p = appendP(p, PSTR("\",\"st\":\"hb\",\"ts\":"));
     p = appendR(p, tsBuf);
-    p = appendP(p, PSTR(",\"led_red\":"));
+    p = appendP(p, PSTR(",\"r\":"));
     p = appendBool(p, digitalRead(PIN_RED) == RELAY_ON);
-    p = appendP(p, PSTR(",\"led_yellow\":"));
+    p = appendP(p, PSTR(",\"y\":"));
     p = appendBool(p, digitalRead(PIN_YEL) == RELAY_ON);
-    p = appendP(p, PSTR(",\"led_green\":"));
+    p = appendP(p, PSTR(",\"g\":"));
     p = appendBool(p, digitalRead(PIN_GRN) == RELAY_ON);
-    p = appendP(p, PSTR(",\"panic_button\":"));
+    p = appendP(p, PSTR(",\"pb\":"));
     p = appendBool(p, digitalRead(PIN_BTN) == HIGH);
-    p = appendP(p, PSTR(",\"sirene\":"));
+    p = appendP(p, PSTR(",\"sir\":"));
     p = appendBool(p, digitalRead(PIN_SIR) == RELAY_ON);
-    p = appendP(p, PSTR(",\"rotator\":"));
+    p = appendP(p, PSTR(",\"rot\":"));
     p = appendBool(p, digitalRead(PIN_ROT) == RELAY_ON);
-    p = appendP(p, PSTR(",\"panic_state\":"));
+    p = appendP(p, PSTR(",\"ps\":"));
     p = appendBool(p, isPanic);
     // Append temperature reading
-    p = appendP(p, PSTR(",\"temperature\":"));
+    p = appendP(p, PSTR(",\"t\":"));
     char tempBuf[8];
     dtostrf(lastTemp, 4, 2, tempBuf);
     p = appendR(p, tempBuf);
     *p++ = '}'; *p = '\0';
   } else {
-    p = appendP(p, PSTR("\",\"status\":\"panic\",\"timestamp\":"));
+    p = appendP(p, PSTR("\",\"st\":\"p\",\"ts\":"));
     p = appendR(p, tsBuf);
     *p++ = '}'; *p = '\0';
   }
@@ -396,10 +410,6 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
   }
   sig[64] = '\0';
 
-  // Copy endpoint from PROGMEM
-  char ep[20];
-  strcpy_P(ep, endpoint_P);
-
   if (client.connect(serverNameBuf, serverPort)) {
     failCount = 0;
     if (srvDown && !isPanic) {
@@ -409,7 +419,7 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
     }
 
     client.print(F("POST "));
-    client.print(ep);
+    client.print((const __FlashStringHelper*)endpoint_P);
     client.println(F(" HTTP/1.1"));
     client.print(F("Host: "));
     client.println(serverNameBuf);
@@ -442,12 +452,12 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
       buf[n] = '\0';
 
       // Parse commands
-      if (strstr_P(buf, PSTR("\"command\":\"reset\""))) {
+      if (strstr_P(buf, PSTR("\"cmd\":\"rst\""))) {
         isPanic = false;
         resetLocked = true;
         setAlarmOutputs(RELAY_OFF, RELAY_OFF, RELAY_ON, RELAY_OFF, RELAY_OFF);
       }
-      else if (strstr_P(buf, PSTR("\"command\":\"panic\""))) {
+      else if (strstr_P(buf, PSTR("\"cmd\":\"pnc\""))) {
         isPanic = true;
         digitalWrite(PIN_GRN, RELAY_OFF);
         digitalWrite(PIN_YEL, RELAY_ON);
@@ -456,34 +466,34 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
       }
 
       // Parse granular silent mode mute flags
-      if (strstr_P(buf, PSTR("\"mute_sirene\":true"))) {
+      if (strstr_P(buf, PSTR("\"ms\":true"))) {
         muteSirene = true;
         if (isPanic) digitalWrite(PIN_SIR, RELAY_OFF);
-      } else if (strstr_P(buf, PSTR("\"mute_sirene\":false"))) {
+      } else if (strstr_P(buf, PSTR("\"ms\":false"))) {
         muteSirene = false;
         if (isPanic) digitalWrite(PIN_SIR, RELAY_ON);
       }
 
-      if (strstr_P(buf, PSTR("\"mute_rotator\":true"))) {
+      if (strstr_P(buf, PSTR("\"mr\":true"))) {
         muteRotator = true;
         if (isPanic) digitalWrite(PIN_ROT, RELAY_OFF);
-      } else if (strstr_P(buf, PSTR("\"mute_rotator\":false"))) {
+      } else if (strstr_P(buf, PSTR("\"mr\":false"))) {
         muteRotator = false;
         if (isPanic) digitalWrite(PIN_ROT, RELAY_ON);
       }
 
       // Parse LCD message from server
       {
-        const char* lcdKey = strstr_P(buf, PSTR("\"lcd_message\":\""));
+        const char* lcdKey = strstr_P(buf, PSTR("\"lcd\":\""));
         if (lcdKey) {
-          lcdKey += 15;  // skip past "lcd_message":"
+          lcdKey += 7;  // skip past "lcd":"
           char* endQuote = strchr(lcdKey, '"');
           if (endQuote && (endQuote - lcdKey) < (int)sizeof(lcdSrvMsg)) {
             uint8_t mlen = endQuote - lcdKey;
             memcpy(lcdSrvMsg, lcdKey, mlen);
             lcdSrvMsg[mlen] = '\0';
           }
-        } else if (strstr_P(buf, PSTR("\"lcd_message\":null"))) {
+        } else if (strstr_P(buf, PSTR("\"lcd\":null"))) {
           lcdSrvMsg[0] = '\0';  // Clear server message
         }
       }
