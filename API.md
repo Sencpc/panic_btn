@@ -9,22 +9,24 @@ Dokumentasi lengkap REST API untuk server Panic Button IoT.
 - [Ringkasan Endpoint](#ringkasan-endpoint)
 - [Autentikasi HMAC-SHA256](#autentikasi-hmac-sha256)
 - [Detail Endpoint](#detail-endpoint)
-- [POST /api/heartbeat](#post-apiheartbeat)
-- [POST /api/panic](#post-apipanic)
-- [POST /api/panicoff](#post-apipanicoff)
-- [GET /api/devices](#get-apidevices)
-- [DELETE /api/devices/:device_id](#delete-apidevicesdevice_id)
-- [GET /api/status/:device_id](#get-apistatusdevice_id)
-- [GET /api/panic/active](#get-apipanicactive)
-- [GET /api/events](#get-apievents)
-- [GET /api/events/:device_id](#get-apieventsdevice_id)
-- [GET /api/heartbeat/history/:device_id](#get-apiheartbeat-historydevice_id)
-- [POST /api/silent-mode](#post-apisilent-mode)
-- [GET /api/silent-mode/:device_id](#get-apisilent-modedevice_id)
-- [PATCH /api/silent-mode/:device_id](#patch-apisilent-modedevice_id)
-- [DELETE /api/silent-mode/:device_id](#delete-apisilent-modedevice_id)
-- [GET /api/heartbeat-interval/:device_id](#get-apiheartbeat-intervaldevice_id)
-- [PATCH /api/heartbeat-interval/:device_id](#patch-apiheartbeat-intervaldevice_id)
+  - [POST /api/heartbeat](#post-apiheartbeat)
+  - [POST /api/panic](#post-apipanic)
+  - [POST /api/panicoff](#post-apipanicoff)
+  - [GET /api/devices](#get-apidevices)
+  - [DELETE /api/devices/:device_id](#delete-apidevicesdevice_id)
+  - [GET /api/status/:device_id](#get-apistatusdevice_id)
+  - [GET /api/panic/active](#get-apipanicactive)
+  - [GET /api/events](#get-apievents)
+  - [GET /api/events/:device_id](#get-apieventsdevice_id)
+  - [GET /api/heartbeat/history/:device_id](#get-apiheartbeat-historydevice_id)
+  - [POST /api/silent-mode](#post-apisilent-mode)
+  - [GET /api/silent-mode/:device_id](#get-apisilent-modedevice_id)
+  - [PATCH /api/silent-mode/:device_id](#patch-apisilent-modedevice_id)
+  - [DELETE /api/silent-mode/:device_id](#delete-apisilent-modedevice_id)
+  - [GET /api/heartbeat-interval/:device_id](#get-apiheartbeat-intervaldevice_id)
+  - [PATCH /api/heartbeat-interval/:device_id](#patch-apiheartbeat-intervaldevice_id)
+  - [PATCH /api/devices/:device_id/lcd-message](#patch-apidevicesdevice_idlcd-message)
+  - [GET /api/devices/:device_id/lcd-message](#get-apidevicesdevice_idlcd-message)
 - [Skema Database](#skema-database)
 
 ---
@@ -60,6 +62,8 @@ Endpoint ini dapat diakses tanpa autentikasi (digunakan oleh dashboard web).
 | `DELETE` | `/api/silent-mode/:device_id` | Hapus pengaturan mode senyap |
 | `GET` | `/api/heartbeat-interval/:device_id` | Ambil interval heartbeat |
 | `PATCH` | `/api/heartbeat-interval/:device_id` | Perbarui interval heartbeat |
+| `PATCH` | `/api/devices/:device_id/lcd-message` | Atur pesan LCD |
+| `GET` | `/api/devices/:device_id/lcd-message` | Ambil pesan LCD |
 
 ---
 
@@ -93,9 +97,9 @@ Signature = HMAC-SHA256(
 deviceId  = "ARDPB0001"
 timestamp = "12345678"
 nonce     = "a1b2c3d4"
-rawBody   = '{"device_id":"ARDPB0001","status":"heartbeat",...}'
+rawBody   = '{"id":"ARDPB0001","st":"hb","ts":12345678,"r":false,"y":false,"g":true,"pb":false,"sir":false,"rot":false,"ps":false,"t":28.5}'
 
-message = "ARDPB000112345678a1b2c3d4{\"device_id\":\"ARDPB0001\",\"status\":\"heartbeat\",...}"
+message = "ARDPB000112345678a1b2c3d4{\"id\":\"ARDPB0001\",\"st\":\"hb\",\"ts\":12345678,\"r\":false,\"y\":false,\"g\":true,\"pb\":false,\"sir\":false,\"rot\":false,\"ps\":false,\"t\":28.5}"
 
 signature = HMAC-SHA256(secretKey, message)
 ```
@@ -126,9 +130,9 @@ X-Device-ID: ARDPB0001
 X-Timestamp: 12345678
 X-Nonce: a1b2c3d4
 X-Signature: 3a7f2b9c8e1d4f6a5b0c3d2e1f4a7b9c8e1d4f6a5b0c3d2e1f4a7b9c8e1d4f6a
-Content-Length: 95
+Content-Length: 133
 
-{"device_id":"ARDPB0001","status":"heartbeat","timestamp":12345678,"led_red":false,...}
+{"id":"ARDPB0001","st":"hb","ts":12345678,"r":false,"y":false,"g":true,"pb":false,"sir":false,"rot":false,"ps":false,"t":28.5}
 ```
 
 ### Konfigurasi Kunci
@@ -162,6 +166,7 @@ Server mendukung kunci unik per perangkat yang disimpan di tabel `device_keys`. 
 ### POST /api/heartbeat
 
 Menerima heartbeat dari perangkat Arduino. Endpoint ini **terproteksi HMAC**.
+Payload dirancang sekompak mungkin untuk menghemat RAM/flash di perangkat IoT.
 
 **Header Autentikasi:** `X-Device-ID`, `X-Timestamp`, `X-Nonce`, `X-Signature`
 
@@ -169,79 +174,54 @@ Menerima heartbeat dari perangkat Arduino. Endpoint ini **terproteksi HMAC**.
 
 ```json
 {
-  "device_id": "ARDPB0001",
-  "status": "heartbeat",
-  "timestamp": 12345678,
-  "led_red": false,
-  "led_yellow": false,
-  "led_green": true,
-  "panic_button": false,
-  "sirene": false,
-  "rotator": false,
-  "panic_state": false
+  "id": "ARDPB0001",
+  "st": "hb",
+  "ts": 12345678,
+  "r": false,
+  "y": false,
+  "g": true,
+  "pb": false,
+  "sir": false,
+  "rot": false,
+  "ps": false,
+  "t": 28.5
 }
 ```
 
 | Field | Tipe | Wajib | Deskripsi |
 |-------|------|:-----:|-----------|
-| `device_id` | string | ✅ | ID perangkat (format `ARDPBXXXX`) |
-| `status` | string | ❌ | Status perangkat |
-| `timestamp` | number | ❌ | Timestamp millis() Arduino |
-| `led_red` | boolean | ❌ | Status LED merah |
-| `led_yellow` | boolean | ❌ | Status LED kuning |
-| `led_green` | boolean | ❌ | Status LED hijau |
-| `panic_button` | boolean | ❌ | Status tombol panic |
-| `sirene` | boolean | ❌ | Status relay sirene |
-| `rotator` | boolean | ❌ | Status relay rotator |
-| `panic_state` | boolean | ❌ | Status panic aktif |
+| `id`  | string | ✅ | ID perangkat (format `ARDPBXXXX`) |
+| `st`  | string | ❌ | Status perangkat (`hb` = heartbeat) |
+| `ts`  | number | ❌ | Timestamp millis() Arduino |
+| `r`   | boolean| ❌ | Status relay LED merah |
+| `y`   | boolean| ❌ | Status relay LED kuning |
+| `g`   | boolean| ❌ | Status relay LED hijau |
+| `pb`  | boolean| ❌ | Status tombol panic (terbuka/tertutup) |
+| `sir` | boolean| ❌ | Status relay sirene |
+| `rot` | boolean| ❌ | Status relay rotator |
+| `ps`  | boolean| ❌ | Status panic (boolean) |
+| `t`   | float  | ❌ | Suhu ruangan (dari sensor BMP280) |
 
 **Response 200 OK:**
 
 ```json
 {
-  "success": true,
-  "message": "Heartbeat received",
-  "device_id": "ARDPB0001",
-  "status": "online",
-  "server_time_gmt7": "14:30:00",
-  "silent_mode": {
-    "enabled": false,
-    "start_time": "00:00:00",
-    "end_time": "00:00:00"
-  },
-  "heartbeat_interval": {
-    "interval_seconds": 60
-  },
-  "command": null
+  "cmd": null,
+  "ms": true,
+  "mr": false,
+  "lcd": "Pesan dari server"
 }
 ```
 
-**Response 401 (Autentikasi Gagal):**
+| Field | Tipe | Deskripsi |
+|-------|------|-----------|
+| `cmd` | string/null | Perintah ke perangkat: `"rst"` (reset) atau `"pnc"` (panic ON) |
+| `ms`  | boolean | Mute Sirene (mengatur bisu sirene independen) |
+| `mr`  | boolean | Mute Rotator (mengatur mati rotator independen) |
+| `lcd` | string/null | Pesan LCD yang akan ditampilkan (hingga 64 karakter) |
 
-```json
-{
-  "success": false,
-  "message": "Missing authentication headers. Required: X-Device-ID, X-Timestamp, X-Nonce, X-Signature"
-}
-```
-
-**Response 403 (Signature Tidak Valid / Replay):**
-
-```json
-{
-  "success": false,
-  "message": "Invalid signature"
-}
-```
-
-**Response 400:**
-
-```json
-{
-  "success": false,
-  "message": "device_id is required"
-}
-```
+**Response Error:**
+Lihat bagian "Penanganan Error Autentikasi"
 
 ---
 
@@ -255,38 +235,27 @@ Menerima sinyal panic ON dari perangkat Arduino. Endpoint ini **terproteksi HMAC
 
 ```json
 {
-  "device_id": "ARDPB0001",
-  "status": "panic",
-  "timestamp": 12345678
+  "id": "ARDPB0001",
+  "st": "p",
+  "ts": 12345678
 }
 ```
+
+| Field | Tipe | Wajib | Deskripsi |
+|-------|------|:-----:|-----------|
+| `id`  | string | ✅ | ID perangkat (format `ARDPBXXXX`) |
+| `st`  | string | ❌ | Status perangkat (`p` = panic) |
+| `ts`  | number | ❌ | Timestamp millis() Arduino |
 
 **Response 200 OK:**
 
-```json
-{
-  "success": true,
-  "message": "Panic event received",
-  "event_id": 42,
-  "device_id": "ARDPB0001",
-  "server_time_gmt7": "14:30:00",
-  "silent_mode": {
-    "enabled": false,
-    "start_time": "00:00:00",
-    "end_time": "00:00:00"
-  },
-  "heartbeat_interval": {
-    "interval_seconds": 60
-  },
-  "command": null
-}
-```
+Sama dengan format respon `/api/heartbeat`.
 
 ---
 
 ### POST /api/panicoff
 
-Menerima sinyal panic OFF dari perangkat Arduino. Endpoint ini **terproteksi HMAC**.
+Menerima sinyal panic OFF (reset) dari perangkat Arduino. Endpoint ini **terproteksi HMAC**.
 
 **Header Autentikasi:** `X-Device-ID`, `X-Timestamp`, `X-Nonce`, `X-Signature`
 
@@ -294,32 +263,15 @@ Menerima sinyal panic OFF dari perangkat Arduino. Endpoint ini **terproteksi HMA
 
 ```json
 {
-  "device_id": "ARDPB0001",
-  "status": "off",
-  "timestamp": 12345678
+  "id": "ARDPB0001",
+  "st": "off",
+  "ts": 12345678
 }
 ```
 
 **Response 200 OK:**
 
-```json
-{
-  "success": true,
-  "message": "Panic OFF received",
-  "event_id": 43,
-  "device_id": "ARDPB0001",
-  "server_time_gmt7": "14:35:00",
-  "silent_mode": {
-    "enabled": false,
-    "start_time": "00:00:00",
-    "end_time": "00:00:00"
-  },
-  "heartbeat_interval": {
-    "interval_seconds": 60
-  },
-  "command": null
-}
-```
+Sama dengan format respon `/api/heartbeat`.
 
 ---
 
@@ -333,6 +285,7 @@ Mengambil daftar semua perangkat yang terdaftar.
 {
   "success": true,
   "count": 2,
+  "stats": { "online": 1, "offline": 0, "panic": 1 },
   "devices": [
     {
       "id": 1,
@@ -340,15 +293,18 @@ Mengambil daftar semua perangkat yang terdaftar.
       "device_name": null,
       "status": "normal",
       "last_seen": "2025-12-01 14:30:00",
-      "created_at": "2025-12-01 10:00:00"
-    },
-    {
-      "id": 2,
-      "device_id": "ARDPB0002",
-      "device_name": "Gedung B Lt.3",
-      "status": "panic",
-      "last_seen": "2025-12-01 14:28:00",
-      "created_at": "2025-12-01 11:00:00"
+      "created_at": "2025-12-01 10:00:00",
+      "seconds_ago": 15,
+      "led_red": 0,
+      "led_yellow": 0,
+      "led_green": 1,
+      "sirene": 0,
+      "rotator": 0,
+      "panic_button": 0,
+      "panic_state": 0,
+      "temperature": 28.5,
+      "lcd_message": null,
+      "isOnline": true
     }
   ]
 }
@@ -360,12 +316,6 @@ Mengambil daftar semua perangkat yang terdaftar.
 
 Menghapus perangkat beserta **semua data terkait** (heartbeat, event panic, mode senyap, pengaturan heartbeat, perintah, dan kunci HMAC).
 
-**Parameter URL:**
-
-| Parameter | Deskripsi |
-|-----------|-----------|
-| `device_id` | ID perangkat (contoh: `ARDPB0001`) |
-
 **Response 200 OK:**
 
 ```json
@@ -375,26 +325,11 @@ Menghapus perangkat beserta **semua data terkait** (heartbeat, event panic, mode
 }
 ```
 
-**Response 404:**
-
-```json
-{
-  "success": false,
-  "message": "Device not found"
-}
-```
-
 ---
 
 ### GET /api/status/:device_id
 
 Mengambil status perangkat tertentu.
-
-**Parameter URL:**
-
-| Parameter | Deskripsi |
-|-----------|-----------|
-| `device_id` | ID perangkat (contoh: `ARDPB0001`) |
 
 **Response 200 OK:**
 
@@ -406,6 +341,7 @@ Mengambil status perangkat tertentu.
     "device_id": "ARDPB0001",
     "device_name": null,
     "status": "normal",
+    "lcd_message": null,
     "last_seen": "2025-12-01 14:30:00",
     "created_at": "2025-12-01 10:00:00"
   }
@@ -430,6 +366,7 @@ Mengambil daftar perangkat yang sedang dalam status panic.
       "device_id": "ARDPB0002",
       "device_name": "Gedung B Lt.3",
       "status": "panic",
+      "lcd_message": null,
       "last_seen": "2025-12-01 14:28:00",
       "created_at": "2025-12-01 11:00:00"
     }
@@ -444,37 +381,9 @@ Mengambil daftar perangkat yang sedang dalam status panic.
 Mengambil riwayat semua event panic dari semua perangkat.
 
 **Query Parameters:**
-
 | Parameter | Default | Deskripsi |
 |-----------|---------|-----------|
 | `limit` | `100` | Jumlah maksimum event yang dikembalikan |
-
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "count": 2,
-  "events": [
-    {
-      "id": 43,
-      "device_id": "ARDPB0001",
-      "status": "off",
-      "timestamp": 12345678,
-      "device_ip": "::ffff:192.168.2.248",
-      "received_at": "2025-12-01 14:35:00"
-    },
-    {
-      "id": 42,
-      "device_id": "ARDPB0001",
-      "status": "panic",
-      "timestamp": 12340000,
-      "device_ip": "::ffff:192.168.2.248",
-      "received_at": "2025-12-01 14:30:00"
-    }
-  ]
-}
-```
 
 ---
 
@@ -482,69 +391,11 @@ Mengambil riwayat semua event panic dari semua perangkat.
 
 Mengambil riwayat event panic untuk perangkat tertentu.
 
-**Query Parameters:**
-
-| Parameter | Default | Deskripsi |
-|-----------|---------|-----------|
-| `limit` | `100` | Jumlah maksimum event yang dikembalikan |
-
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "device_id": "ARDPB0001",
-  "count": 2,
-  "events": [
-    {
-      "id": 43,
-      "device_id": "ARDPB0001",
-      "status": "off",
-      "timestamp": 12345678,
-      "device_ip": "::ffff:192.168.2.248",
-      "received_at": "2025-12-01 14:35:00"
-    }
-  ]
-}
-```
-
 ---
 
 ### GET /api/heartbeat/history/:device_id
 
 Mengambil riwayat heartbeat untuk perangkat tertentu.
-
-**Query Parameters:**
-
-| Parameter | Default | Deskripsi |
-|-----------|---------|-----------|
-| `limit` | `50` | Jumlah maksimum heartbeat yang dikembalikan |
-
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "device_id": "ARDPB0001",
-  "count": 1,
-  "heartbeats": [
-    {
-      "id": 100,
-      "device_id": "ARDPB0001",
-      "timestamp": 12345678,
-      "device_ip": "::ffff:192.168.2.248",
-      "led_red": 0,
-      "led_yellow": 0,
-      "led_green": 1,
-      "panic_button": 0,
-      "sirene": 0,
-      "rotator": 0,
-      "panic_state": 0,
-      "received_at": "2025-12-01 14:30:00"
-    }
-  ]
-}
-```
 
 ---
 
@@ -559,31 +410,20 @@ Mengatur pengaturan mode senyap untuk perangkat (pengaturan lengkap). Jika peran
   "device_id": "ARDPB0001",
   "enabled": true,
   "start_time": "22:00:00",
-  "end_time": "06:00:00"
+  "end_time": "06:00:00",
+  "mute_sirene": true,
+  "mute_rotator": false
 }
 ```
 
 | Field | Tipe | Wajib | Deskripsi |
 |-------|------|:-----:|-----------|
 | `device_id` | string | ✅ | ID perangkat |
-| `enabled` | boolean | ✅ | Aktifkan/nonaktifkan mode senyap |
+| `enabled` | boolean | ✅ | Aktifkan/nonaktifkan mode senyap secara waktu |
 | `start_time` | string | ✅ | Waktu mulai (format `HH:MM:SS`) |
 | `end_time` | string | ✅ | Waktu selesai (format `HH:MM:SS`) |
-
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "message": "Silent mode configured",
-  "silent_mode": {
-    "device_id": "ARDPB0001",
-    "enabled": 1,
-    "start_time": "22:00:00",
-    "end_time": "06:00:00"
-  }
-}
-```
+| `mute_sirene`| boolean | ❌ | Mematikan sirene saat mode senyap (default `true`) |
+| `mute_rotator`| boolean| ❌ | Mematikan rotator saat mode senyap (default `false`) |
 
 ---
 
@@ -603,19 +443,10 @@ Mengambil pengaturan mode senyap untuk perangkat tertentu.
     "enabled": 1,
     "start_time": "22:00:00",
     "end_time": "06:00:00",
+    "mute_sirene": 1,
+    "mute_rotator": 0,
     "updated_at": "2025-12-01 14:00:00"
   }
-}
-```
-
-**Response 404:**
-
-```json
-{
-  "success": true,
-  "device_id": "ARDPB0001",
-  "silent_mode": null,
-  "message": "No silent mode configured"
 }
 ```
 
@@ -629,31 +460,9 @@ Memperbarui sebagian pengaturan mode senyap. Hanya field yang disertakan dalam b
 
 ```json
 {
-  "enabled": false
-}
-```
-
-```json
-{
-  "start_time": "20:00:00",
-  "end_time": "07:00:00"
-}
-```
-
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "message": "Silent mode updated",
-  "silent_mode": {
-    "id": 1,
-    "device_id": "ARDPB0001",
-    "enabled": 0,
-    "start_time": "22:00:00",
-    "end_time": "06:00:00",
-    "updated_at": "2025-12-01 15:00:00"
-  }
+  "enabled": false,
+  "mute_sirene": false,
+  "mute_rotator": true
 }
 ```
 
@@ -663,48 +472,11 @@ Memperbarui sebagian pengaturan mode senyap. Hanya field yang disertakan dalam b
 
 Menghapus pengaturan mode senyap untuk perangkat tertentu.
 
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "message": "Silent mode deleted for device ARDPB0001"
-}
-```
-
 ---
 
 ### GET /api/heartbeat-interval/:device_id
 
 Mengambil pengaturan interval heartbeat untuk perangkat tertentu.
-
-**Response 200 OK:**
-
-```json
-{
-  "success": true,
-  "device_id": "ARDPB0001",
-  "heartbeat_interval": {
-    "id": 1,
-    "device_id": "ARDPB0001",
-    "interval_seconds": 60,
-    "updated_at": "2025-12-01 14:00:00"
-  }
-}
-```
-
-**Response 404:**
-
-```json
-{
-  "success": true,
-  "device_id": "ARDPB0001",
-  "heartbeat_interval": {
-    "interval_seconds": 60
-  },
-  "message": "Using default interval"
-}
-```
 
 ---
 
@@ -712,39 +484,48 @@ Mengambil pengaturan interval heartbeat untuk perangkat tertentu.
 
 Memperbarui interval heartbeat untuk perangkat tertentu. Minimum 5 detik.
 
+---
+
+### PATCH /api/devices/:device_id/lcd-message
+
+Mengatur atau menghapus pesan LCD dari perangkat.
+
 **Request Body:**
 
 ```json
 {
-  "interval_seconds": 30
+  "lcd_message": "Sistem Normal"
 }
 ```
 
 | Field | Tipe | Wajib | Deskripsi |
 |-------|------|:-----:|-----------|
-| `interval_seconds` | number | ✅ | Interval dalam detik (min: 5) |
+| `lcd_message` | string | ✅ | Pesan LCD (max 64 karakter) atau `null` untuk hapus |
 
 **Response 200 OK:**
 
 ```json
 {
   "success": true,
-  "message": "Heartbeat interval updated to 30s",
-  "heartbeat_interval": {
-    "id": 1,
-    "device_id": "ARDPB0001",
-    "interval_seconds": 30,
-    "updated_at": "2025-12-01 15:00:00"
-  }
+  "message": "LCD message set",
+  "device_id": "ARDPB0001",
+  "lcd_message": "Sistem Normal"
 }
 ```
 
-**Response 400:**
+---
+
+### GET /api/devices/:device_id/lcd-message
+
+Mengambil pesan LCD perangkat.
+
+**Response 200 OK:**
 
 ```json
 {
-  "success": false,
-  "message": "interval_seconds must be a number (minimum 5)"
+  "success": true,
+  "device_id": "ARDPB0001",
+  "lcd_message": "Sistem Normal"
 }
 ```
 
@@ -752,7 +533,7 @@ Memperbarui interval heartbeat untuk perangkat tertentu. Minimum 5 detik.
 
 ## Skema Database
 
-Database SQLite disimpan di `server/data/panicbutton.db`.
+Database MySQL/MariaDB disimpan sesuai konfigurasi `DB_HOST`, `DB_USER`, `DB_PASSWORD`, dan `DB_NAME`.
 
 ### Tabel `devices`
 
@@ -762,6 +543,8 @@ Database SQLite disimpan di `server/data/panicbutton.db`.
 | `device_id` | TEXT | ID unik perangkat, format `ARDPBXXXX` |
 | `device_name` | TEXT | Nama perangkat (opsional) |
 | `status` | TEXT | Status: `normal`, `panic`, `online`, `offline` |
+| `device_ip` | TEXT | IP Address |
+| `lcd_message` | VARCHAR(64) | Pesan khusus pada LCD untuk perangkat ini |
 | `last_seen` | DATETIME | Terakhir terlihat |
 | `created_at` | DATETIME | Waktu pendaftaran |
 
@@ -771,7 +554,7 @@ Database SQLite disimpan di `server/data/panicbutton.db`.
 |-------|------|------------|
 | `id` | INTEGER | Primary key, auto increment |
 | `device_id` | TEXT | Foreign key ke `devices` |
-| `timestamp` | INTEGER | Timestamp millis() dari Arduino |
+| `timestamp` | BIGINT | Timestamp millis() dari Arduino |
 | `device_ip` | TEXT | Alamat IP perangkat |
 | `led_red` | INTEGER | Status LED merah (0/1) |
 | `led_yellow` | INTEGER | Status LED kuning (0/1) |
@@ -780,6 +563,7 @@ Database SQLite disimpan di `server/data/panicbutton.db`.
 | `sirene` | INTEGER | Status relay sirene (0/1) |
 | `rotator` | INTEGER | Status relay rotator (0/1) |
 | `panic_state` | INTEGER | Status panic aktif (0/1) |
+| `temperature` | FLOAT | Temperatur dari BMP280 |
 | `received_at` | DATETIME | Waktu penerimaan di server |
 
 ### Tabel `panic_events`
@@ -789,7 +573,7 @@ Database SQLite disimpan di `server/data/panicbutton.db`.
 | `id` | INTEGER | Primary key, auto increment |
 | `device_id` | TEXT | Foreign key ke `devices` |
 | `status` | TEXT | Status: `panic` atau `off` |
-| `timestamp` | INTEGER | Timestamp millis() dari Arduino |
+| `timestamp` | BIGINT | Timestamp millis() dari Arduino |
 | `device_ip` | TEXT | Alamat IP perangkat |
 | `received_at` | DATETIME | Waktu penerimaan di server |
 
@@ -800,8 +584,10 @@ Database SQLite disimpan di `server/data/panicbutton.db`.
 | `id` | INTEGER | Primary key, auto increment |
 | `device_id` | TEXT | Foreign key ke `devices`, unique |
 | `enabled` | INTEGER | 0 = nonaktif, 1 = aktif |
-| `start_time` | TEXT | Waktu mulai (`HH:MM:SS`) |
-| `end_time` | TEXT | Waktu selesai (`HH:MM:SS`) |
+| `start_time` | TIME | Waktu mulai (`HH:MM:SS`) |
+| `end_time` | TIME | Waktu selesai (`HH:MM:SS`) |
+| `mute_sirene` | INTEGER | Status muting sirene (0/1) |
+| `mute_rotator` | INTEGER | Status muting rotator (0/1) |
 | `updated_at` | DATETIME | Terakhir diperbarui |
 
 ### Tabel `device_commands`
@@ -810,7 +596,7 @@ Database SQLite disimpan di `server/data/panicbutton.db`.
 |-------|------|------------|
 | `id` | INTEGER | Primary key, auto increment |
 | `device_id` | TEXT | Foreign key ke `devices` |
-| `command` | TEXT | Perintah (contoh: `reset`) |
+| `command` | TEXT | Perintah (contoh: `reset`, `panic`) |
 | `created_at` | DATETIME | Waktu pembuatan perintah |
 
 ### Tabel `heartbeat_settings`
