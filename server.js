@@ -419,8 +419,10 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices SET status = 'panic', last_seen = NOW(), device_ip = ? WHERE device_id = ?`,
-      [ip, device_id],
+      `INSERT INTO devices (device_id, status, device_ip, last_seen)
+       VALUES (?, 'panic', ?, NOW())
+       ON DUPLICATE KEY UPDATE status='panic', device_ip=VALUES(device_ip), last_seen=NOW()`,
+      [device_id, ip],
     );
 
     await pool.query(
@@ -490,8 +492,10 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices SET status = 'normal', last_seen = NOW(), device_ip = ? WHERE device_id = ?`,
-      [ip, device_id],
+      `INSERT INTO devices (device_id, status, device_ip, last_seen)
+       VALUES (?, 'normal', ?, NOW())
+       ON DUPLICATE KEY UPDATE status='normal', device_ip=VALUES(device_ip), last_seen=NOW()`,
+      [device_id, ip],
     );
 
     await pool.query(
@@ -982,7 +986,9 @@ app.post("/api/dashboard/panic", async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices SET status = 'panic' WHERE device_id = ?`,
+      `INSERT INTO devices (device_id, status, last_seen)
+       VALUES (?, 'panic', NOW())
+       ON DUPLICATE KEY UPDATE status='panic', last_seen=NOW()`,
       [device_id],
     );
     const [result] = await pool.query(
@@ -1013,7 +1019,9 @@ app.post("/api/dashboard/reset", async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices SET status = 'normal' WHERE device_id = ?`,
+      `INSERT INTO devices (device_id, status, last_seen)
+       VALUES (?, 'normal', NOW())
+       ON DUPLICATE KEY UPDATE status='normal', last_seen=NOW()`,
       [device_id],
     );
     const [result] = await pool.query(
