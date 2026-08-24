@@ -1099,9 +1099,9 @@
                       <thead class="bg-surface border-b border-borderDim text-[10px] uppercase tracking-wider text-slate-500 font-bold">
                         <tr>
                           <th class="py-3 px-4">Date & Time</th>
+                          <th class="py-3 px-3 text-center">RED</th>
                           <th class="py-3 px-3 text-center">YLW</th>
                           <th class="py-3 px-3 text-center">GRN</th>
-                          <th class="py-3 px-3 text-center">RED</th>
                           <th class="py-3 px-3 text-center">SI</th>
                           <th class="py-3 px-3 text-center">RO</th>
                           <th class="py-3 px-3 text-center">PS</th>
@@ -1117,13 +1117,13 @@
                               </div>
                             </td>
                             <td class="py-2.5 px-3 text-center">
+                              <span class="history-dot" :class="hb.led_red ? 'on-red' : 'off-dot'"></span>
+                            </td>
+                            <td class="py-2.5 px-3 text-center">
                               <span class="history-dot" :class="hb.led_yellow ? 'on-yellow' : 'off-dot'"></span>
                             </td>
                             <td class="py-2.5 px-3 text-center">
                               <span class="history-dot" :class="hb.led_green ? 'on-green' : 'off-dot'"></span>
-                            </td>
-                            <td class="py-2.5 px-3 text-center">
-                              <span class="history-dot" :class="hb.led_red ? 'on-red' : 'off-dot'"></span>
                             </td>
                             <td class="py-2.5 px-3 text-center">
                               <span class="history-dot" :class="hb.sirene ? 'on-red' : 'off-dot'"></span>
