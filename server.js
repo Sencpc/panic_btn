@@ -38,6 +38,8 @@ async function initDB() {
         status VARCHAR(50) DEFAULT 'normal',
         device_ip VARCHAR(50),
         last_seen DATETIME,
+        latitude DECIMAL(10, 7) DEFAULT NULL,
+        longitude DECIMAL(10, 7) DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -134,6 +136,24 @@ async function initDB() {
         `ALTER TABLE silent_mode_settings ADD COLUMN mute_rotator INT DEFAULT 0`,
       );
       console.log("Added mute_rotator column to silent_mode_settings.");
+    } catch (e) {
+      if (!e.message.includes("Duplicate column")) throw e;
+    }
+
+    try {
+      await pool.query(
+        `ALTER TABLE devices ADD COLUMN latitude DECIMAL(10, 7) DEFAULT NULL`,
+      );
+      console.log("Added latitude column to devices.");
+    } catch (e) {
+      if (!e.message.includes("Duplicate column")) throw e;
+    }
+
+    try {
+      await pool.query(
+        `ALTER TABLE devices ADD COLUMN longitude DECIMAL(10, 7) DEFAULT NULL`,
+      );
+      console.log("Added longitude column to devices.");
     } catch (e) {
       if (!e.message.includes("Duplicate column")) throw e;
     }
