@@ -22,8 +22,8 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 #define RELAY_OFF HIGH
 #define PIN_BTN   A0
 #define PIN_BTN2  A1
-#define PIN_RED   4
-#define PIN_YEL   5
+#define PIN_RED   5
+#define PIN_YEL   4
 #define PIN_GRN   6
 #define PIN_ROT   7
 #define PIN_SIR   8
