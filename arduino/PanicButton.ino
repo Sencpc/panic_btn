@@ -411,12 +411,12 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
     p = appendBool(p, digitalRead(PIN_ROT) == RELAY_ON);
     p = appendP(p, PSTR(",\"ps\":"));
     p = appendBool(p, isPanic);
-    // Tambahkan pembacaan suhu
-    p = appendP(p, PSTR(",\"t\":"));
+    // Tambahkan pembacaan suhu (kirim sebagai string agar HMAC server tidak gagal saat parse)
+    p = appendP(p, PSTR(",\"t\":\""));
     char tempBuf[8];
     dtostrf(lastTemp, 4, 2, tempBuf);
     p = appendR(p, tempBuf);
-    *p++ = '}'; *p = '\0';
+    p = appendP(p, PSTR("\"}"));
   } else {
     p = appendP(p, PSTR("\",\"st\":\"p\",\"ts\":"));
     p = appendR(p, tsBuf);
@@ -474,6 +474,8 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
         if (client.available()) {
           buf[n++] = client.read();
           t0 = millis();
+        } else if (!client.connected()) {
+          break;
         } else {
           delay(10);
         }

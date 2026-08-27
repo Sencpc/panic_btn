@@ -3,14 +3,33 @@ const mysql = require("mysql2/promise");
 const crypto = require("crypto");
 const cors = require("cors");
 const path = require("path");
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const HMAC_SECRET_KEY = process.env.HMAC_SECRET_KEY;
 
+// ═══════════════════════════════════════════════════════════════════
+// DASHBOARD AUTH CONFIG
+// ═══════════════════════════════════════════════════════════════════
+
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const JWT_SECRET =
+  process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex");
+const JWT_TTL = 30 * 60; // 30 minutes in seconds
+
+if (!ADMIN_PASSWORD) {
+  console.warn(
+    "⚠  WARNING: ADMIN_PASSWORD not set! Dashboard login will accept any password.",
+  );
+}
+
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 // ═══════════════════════════════════════════════════════════════════
@@ -560,10 +579,74 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// PUBLIC ENDPOINTS
+// DASHBOARD AUTH ENDPOINTS & MIDDLEWARE
 // ═══════════════════════════════════════════════════════════════════
 
-app.get("/api/devices", async (req, res) => {
+const verifyDashboardAuth = (req, res, next) => {
+  const token = req.cookies && req.cookies.auth_token;
+  if (!token) {
+    return res.status(401).json({ success: false, message: "Not authenticated" });
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.adminUser = decoded.username;
+    next();
+  } catch (err) {
+    return res
+      .status(401)
+      .json({ success: false, message: "Session expired or invalid" });
+  }
+};
+
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Username and password required" });
+  }
+
+  // If ADMIN_PASSWORD is not set, accept any password (dev mode)
+  const validUser = username === ADMIN_USERNAME;
+  const validPass = ADMIN_PASSWORD ? password === ADMIN_PASSWORD : true;
+
+  if (!validUser || !validPass) {
+    return res
+      .status(401)
+      .json({ success: false, message: "Invalid credentials" });
+  }
+
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_TTL });
+
+  res.cookie("auth_token", token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    // No maxAge → session cookie (deleted on browser close)
+  });
+
+  res.json({ success: true, message: "Login successful", username });
+});
+
+app.post("/api/logout", (req, res) => {
+  res.clearCookie("auth_token", {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+  });
+  res.json({ success: true, message: "Logged out" });
+});
+
+app.get("/api/auth/verify", verifyDashboardAuth, (req, res) => {
+  res.json({ success: true, username: req.adminUser });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// DASHBOARD-PROTECTED ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════
+
+app.get("/api/devices", verifyDashboardAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT d.*, 
@@ -600,7 +683,7 @@ app.get("/api/devices", async (req, res) => {
   }
 });
 
-app.delete("/api/devices/:device_id", async (req, res) => {
+app.delete("/api/devices/:device_id", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.params;
 
   try {
@@ -641,7 +724,7 @@ app.delete("/api/devices/:device_id", async (req, res) => {
   }
 });
 
-app.get("/api/status/:device_id", async (req, res) => {
+app.get("/api/status/:device_id", verifyDashboardAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT * FROM devices WHERE device_id = ?`,
@@ -657,7 +740,7 @@ app.get("/api/status/:device_id", async (req, res) => {
   }
 });
 
-app.get("/api/panic/active", async (req, res) => {
+app.get("/api/panic/active", verifyDashboardAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT * FROM devices WHERE status = 'panic'`,
@@ -668,7 +751,7 @@ app.get("/api/panic/active", async (req, res) => {
   }
 });
 
-app.get("/api/events", async (req, res) => {
+app.get("/api/events", verifyDashboardAuth, async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 1000);
   try {
     const [rows] = await pool.query(
@@ -681,7 +764,7 @@ app.get("/api/events", async (req, res) => {
   }
 });
 
-app.get("/api/events/:device_id", async (req, res) => {
+app.get("/api/events/:device_id", verifyDashboardAuth, async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 1000);
   try {
     const [rows] = await pool.query(
@@ -699,7 +782,7 @@ app.get("/api/events/:device_id", async (req, res) => {
   }
 });
 
-app.get("/api/heartbeat/history/:device_id", async (req, res) => {
+app.get("/api/heartbeat/history/:device_id", verifyDashboardAuth, async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 1000);
   try {
     const [rows] = await pool.query(
@@ -721,7 +804,7 @@ app.get("/api/heartbeat/history/:device_id", async (req, res) => {
 // SILENT MODE ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════
 
-app.post("/api/silent-mode", async (req, res) => {
+app.post("/api/silent-mode", verifyDashboardAuth, async (req, res) => {
   const {
     device_id,
     enabled,
@@ -771,7 +854,7 @@ app.post("/api/silent-mode", async (req, res) => {
   }
 });
 
-app.get("/api/silent-mode/:device_id", async (req, res) => {
+app.get("/api/silent-mode/:device_id", verifyDashboardAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT * FROM silent_mode_settings WHERE device_id = ?`,
@@ -795,7 +878,7 @@ app.get("/api/silent-mode/:device_id", async (req, res) => {
   }
 });
 
-app.patch("/api/silent-mode/:device_id", async (req, res) => {
+app.patch("/api/silent-mode/:device_id", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.params;
   const updates = req.body;
 
@@ -849,7 +932,7 @@ app.patch("/api/silent-mode/:device_id", async (req, res) => {
   }
 });
 
-app.delete("/api/silent-mode/:device_id", async (req, res) => {
+app.delete("/api/silent-mode/:device_id", verifyDashboardAuth, async (req, res) => {
   try {
     await pool.query(`DELETE FROM silent_mode_settings WHERE device_id = ?`, [
       req.params.device_id,
@@ -867,7 +950,7 @@ app.delete("/api/silent-mode/:device_id", async (req, res) => {
 // HEARTBEAT INTERVAL ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════
 
-app.get("/api/heartbeat-interval/:device_id", async (req, res) => {
+app.get("/api/heartbeat-interval/:device_id", verifyDashboardAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT * FROM heartbeat_settings WHERE device_id = ?`,
@@ -890,7 +973,7 @@ app.get("/api/heartbeat-interval/:device_id", async (req, res) => {
   }
 });
 
-app.patch("/api/heartbeat-interval/:device_id", async (req, res) => {
+app.patch("/api/heartbeat-interval/:device_id", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.params;
   const { interval_seconds } = req.body;
 
@@ -931,7 +1014,7 @@ app.patch("/api/heartbeat-interval/:device_id", async (req, res) => {
 // LCD MESSAGE ENDPOINT
 // ═══════════════════════════════════════════════════════════════════
 
-app.patch("/api/devices/:device_id/lcd-message", async (req, res) => {
+app.patch("/api/devices/:device_id/lcd-message", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.params;
   const { lcd_message } = req.body;
 
@@ -965,7 +1048,7 @@ app.patch("/api/devices/:device_id/lcd-message", async (req, res) => {
   }
 });
 
-app.get("/api/devices/:device_id/lcd-message", async (req, res) => {
+app.get("/api/devices/:device_id/lcd-message", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.params;
 
   try {
@@ -993,7 +1076,7 @@ app.get("/api/devices/:device_id/lcd-message", async (req, res) => {
 // DASHBOARD ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════
 
-app.post("/api/dashboard/panic", async (req, res) => {
+app.post("/api/dashboard/panic", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.body;
   if (!device_id)
     return res
@@ -1024,7 +1107,7 @@ app.post("/api/dashboard/panic", async (req, res) => {
   }
 });
 
-app.post("/api/dashboard/reset", async (req, res) => {
+app.post("/api/dashboard/reset", verifyDashboardAuth, async (req, res) => {
   const { device_id } = req.body;
   if (!device_id)
     return res

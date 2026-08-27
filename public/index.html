@@ -393,9 +393,133 @@
       .dialog-overlay.show .dialog-box {
         transform: scale(1) translateY(0);
       }
+      /* Login Screen */
+      .login-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: radial-gradient(circle at top center, #0f172a 0%, #020617 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.4s ease, visibility 0.4s ease;
+      }
+      .login-screen.hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .login-card {
+        background: rgba(15, 23, 42, 0.8);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 24px;
+        padding: 48px 40px;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.7),
+                    0 0 40px rgba(239, 68, 68, 0.05);
+      }
+      .login-input {
+        width: 100%;
+        background: #020617;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 12px 16px;
+        color: #e2e8f0;
+        font-size: 14px;
+        font-family: inherit;
+        transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        outline: none;
+      }
+      .login-input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      }
+      .login-input::placeholder {
+        color: #475569;
+      }
+      .login-btn {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        font-size: 14px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+      }
+      .login-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.45);
+      }
+      .login-btn:active {
+        transform: translateY(0);
+      }
+      .login-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .login-error {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.2);
+        color: #f87171;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        display: none;
+      }
+      .login-error.show {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
     </style>
   </head>
   <body class="text-slate-300 font-sans min-h-screen">
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+      <div class="login-card">
+        <div class="flex items-center gap-3 mb-2">
+          <div class="w-11 h-11 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-white">Panic Button IoT</h2>
+            <p class="text-[11px] text-slate-500 font-medium">Admin Dashboard</p>
+          </div>
+        </div>
+        <p class="text-sm text-slate-400 mb-8">Sign in to access the control panel.</p>
+
+        <div id="loginError" class="login-error mb-4">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+          <span id="loginErrorMsg">Invalid credentials</span>
+        </div>
+
+        <form id="loginForm" onsubmit="handleLogin(event)" autocomplete="on">
+          <div class="mb-4">
+            <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Username</label>
+            <input id="loginUsername" type="text" class="login-input" placeholder="Enter username" autocomplete="username" required />
+          </div>
+          <div class="mb-6">
+            <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Password</label>
+            <input id="loginPassword" type="password" class="login-input" placeholder="Enter password" autocomplete="current-password" required />
+          </div>
+          <button id="loginBtn" type="submit" class="login-btn">
+            Sign In
+          </button>
+        </form>
+
+        <p class="text-center text-[11px] text-slate-600 mt-6">Secured with JWT · Session expires on close</p>
+      </div>
+    </div>
+
     <!-- Toast container -->
     <div id="toast" class="toast flex items-center gap-3"></div>
 
@@ -422,7 +546,7 @@
       </div>
     </div>
 
-    <div class="max-w-[1440px] mx-auto px-6 py-8" x-data="dashboard()">
+    <div id="dashboardContent" class="max-w-[1440px] mx-auto px-6 py-8" x-data="dashboard()" style="display: none;">
       <!-- ═══════════ HEADER ═══════════ -->
       <header
         id="app-header"
@@ -499,6 +623,15 @@
           <span class="text-slate-500 text-xs font-mono" x-text="lastUpdate"
             >--:--:--</span
           >
+          <div class="h-4 w-px bg-borderDim"></div>
+          <button
+            @click="handleLogout()"
+            class="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-red-400 transition-colors"
+            title="Logout"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+            Logout
+          </button>
         </div>
       </header>
 
@@ -1310,6 +1443,84 @@
         return div.innerHTML;
       }
 
+      // ═══════════════════════════════════════════════
+      // AUTH FUNCTIONS
+      // ═══════════════════════════════════════════════
+
+      async function checkAuth() {
+        try {
+          const res = await fetch('/api/auth/verify');
+          if (res.ok) {
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('dashboardContent').style.display = '';
+            return true;
+          }
+        } catch (e) {}
+        document.getElementById('loginScreen').classList.remove('hidden');
+        document.getElementById('dashboardContent').style.display = 'none';
+        return false;
+      }
+
+      async function handleLogin(e) {
+        e.preventDefault();
+        const username = document.getElementById('loginUsername').value;
+        const password = document.getElementById('loginPassword').value;
+        const btn = document.getElementById('loginBtn');
+        const errorEl = document.getElementById('loginError');
+        const errorMsg = document.getElementById('loginErrorMsg');
+
+        btn.disabled = true;
+        btn.textContent = 'Signing in...';
+        errorEl.classList.remove('show');
+
+        try {
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('dashboardContent').style.display = '';
+            document.getElementById('loginPassword').value = '';
+            // Reinitialize dashboard if Alpine is ready
+            if (window.Alpine) {
+              const dashEl = document.getElementById('dashboardContent');
+              const comp = Alpine.$data(dashEl);
+              if (comp && comp.updateDashboard) comp.updateDashboard();
+            }
+          } else {
+            errorMsg.textContent = data.message || 'Invalid credentials';
+            errorEl.classList.add('show');
+          }
+        } catch (err) {
+          errorMsg.textContent = 'Server connection failed';
+          errorEl.classList.add('show');
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      }
+
+      function showLoginScreen() {
+        document.getElementById('loginScreen').classList.remove('hidden');
+        document.getElementById('dashboardContent').style.display = 'none';
+      }
+
+      // Auth-aware fetch wrapper — shows login screen on 401
+      async function authFetch(url, options = {}) {
+        const res = await fetch(url, options);
+        if (res.status === 401) {
+          showLoginScreen();
+          throw new Error('Session expired');
+        }
+        return res;
+      }
+
+      // Check auth on page load
+      checkAuth();
+
       document.addEventListener("alpine:init", () => {
         Alpine.data("dashboard", () => ({
           stats: { total: 0, online: 0, panic: 0, offline: 0 },
@@ -1340,7 +1551,7 @@
           async updateDashboard() {
             if (!this.autoRefresh) return;
             try {
-              const devRes = await fetch("/api/devices");
+              const devRes = await authFetch("/api/devices");
               const devData = await devRes.json();
               if (devData.success) {
                 this.stats = {
@@ -1374,7 +1585,7 @@
                 this.devices = devData.devices;
               }
 
-              const evRes = await fetch("/api/events?limit=10");
+              const evRes = await authFetch("/api/events?limit=10");
               const evData = await evRes.json();
               if (evData.success) {
                 this.events = evData.events;
@@ -1392,6 +1603,7 @@
                 }
               }
             } catch (err) {
+              if (err.message === 'Session expired') return;
               this.connected = false;
             }
             this.lastUpdate = new Date().toLocaleTimeString("en-US", {
@@ -1401,7 +1613,7 @@
 
           async loadSilentMode(deviceId) {
             try {
-              const res = await fetch(`/api/silent-mode/${deviceId}`);
+              const res = await authFetch(`/api/silent-mode/${deviceId}`);
               const data = await res.json();
               if (data.success && data.silent_mode) {
                 this.silentModeCache[deviceId] = {
@@ -1431,7 +1643,7 @@
             const start_time = this.toTimeAPI(dev.sm.start_time);
             const end_time = this.toTimeAPI(dev.sm.end_time);
             try {
-              const res = await fetch("/api/silent-mode", {
+              const res = await authFetch("/api/silent-mode", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -1468,7 +1680,7 @@
             );
             if (!ok) return;
             try {
-              const res = await fetch("/api/dashboard/panic", {
+              const res = await authFetch("/api/dashboard/panic", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ device_id: deviceId }),
@@ -1485,7 +1697,7 @@
 
           async resetPanic(deviceId) {
             try {
-              const res = await fetch("/api/dashboard/reset", {
+              const res = await authFetch("/api/dashboard/reset", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ device_id: deviceId }),
@@ -1509,7 +1721,7 @@
             );
             if (!ok) return;
             try {
-              const res = await fetch(`/api/devices/${deviceId}`, {
+              const res = await authFetch(`/api/devices/${deviceId}`, {
                 method: "DELETE",
               });
               const data = await res.json();
@@ -1533,7 +1745,7 @@
           async loadHistory(dev) {
             dev.historyLoading = true;
             try {
-              const res = await fetch(`/api/heartbeat/history/${dev.device_id}?limit=50`);
+              const res = await authFetch(`/api/heartbeat/history/${dev.device_id}?limit=50`);
               const data = await res.json();
               if (data.success) {
                 dev.historyData = data.heartbeats;
@@ -1554,7 +1766,7 @@
               return;
             }
             try {
-              const res = await fetch(`/api/devices/${dev.device_id}/lcd-message`, {
+              const res = await authFetch(`/api/devices/${dev.device_id}/lcd-message`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ lcd_message: msg }),
@@ -1571,7 +1783,7 @@
 
           async clearLcdMessage(dev) {
             try {
-              const res = await fetch(`/api/devices/${dev.device_id}/lcd-message`, {
+              const res = await authFetch(`/api/devices/${dev.device_id}/lcd-message`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ lcd_message: null }),
@@ -1585,6 +1797,14 @@
             } catch (e) {
               showToast('Server connection failed', 'error');
             }
+          },
+
+          async handleLogout() {
+            try {
+              await fetch('/api/logout', { method: 'POST' });
+            } catch (e) {}
+            if (this.refreshTimer) clearInterval(this.refreshTimer);
+            showLoginScreen();
           },
 
           formatSecondsAgo(seconds) {
