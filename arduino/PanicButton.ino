@@ -5,9 +5,7 @@
  *
  * Pustaka external yang digunakan:
  * - sha256: Diambil dan dimodifikasi dari https://github.com/Cathedrow/Cryptosuite.git
- * - bmp280_ltsm: Untuk pembacaan sensor dari https://github.com/gavinlyonsrepo/BMP280_LTSM
  * - LiquidCrystal_I2C: Untuk tampilan LCD dari https://github.com/johnrickman/LiquidCrystal_I2C
- * - GSMSimHTTP: Untuk komunikasi SIM800L dari https://github.com/erdemarslan/GSMSim
  * 
  * Pustaka dari Arduino ide:
  * - SPI
@@ -15,10 +13,10 @@
  * - SoftwareSerial
  */
 #include <sha256.h>
-#include "bmp280_ltsm.hpp"
 #include <SPI.h>
 #include <Ethernet.h>
 #include <LiquidCrystal_I2C.h>
+#include <Wire.h>
 
 // === MODUL DARURAT FALLBACK SIM800L ===
 // Hapus komentar baris di bawah untuk mengaktifkan fallback GPRS SIM800L
@@ -26,16 +24,14 @@
 
 #ifdef USE_SIM800L
   #include <SoftwareSerial.h>
-  #include <GSMSimHTTP.h>
 
   #define PIN_SIM_RX   2        // Arduino RX <- SIM800L TX
   #define PIN_SIM_TX   3        // Arduino TX -> SIM800L RX
-  #define PIN_SIM_RST  9        // Pin dummy (RST tidak disambungkan — library men-toggle tanpa efek)
+  #define PIN_SIM_RST  9        // Pin dummy (RST tidak disambungkan)
   #define SIM_BAUD     9600     // Baud rate SoftwareSerial (9600 direkomendasikan)
   #define SIM_APN      "internet" // Ganti sesuai APN operator Anda
 
   SoftwareSerial simSerial(PIN_SIM_RX, PIN_SIM_TX);
-  GSMSimHTTP gsm(simSerial, PIN_SIM_RST);
 
   bool simReady = false;           // SIM800L terinisialisasi dan GPRS terhubung
   bool usingSimFallback = false;   // Sedang mengirim data melalui SIM800L
@@ -79,8 +75,11 @@ const uint8_t SECRET_KEY[32] PROGMEM = {
 };
 
 uint8_t I2C_ADDRESS = 0x76;
-uint32_t I2C_BUS_SPEED = 100000;
-BMP280_Sensor bmp280(I2C_ADDRESS, &Wire, I2C_BUS_SPEED);
+
+// Data kalibrasi BMP280
+uint16_t dig_T1;
+int16_t  dig_T2;
+int16_t  dig_T3;
 
 unsigned long lastHB = 0;
 bool isPanic = false;
@@ -104,8 +103,8 @@ unsigned long lastScrollT = 0;
 char lcdPrevRow0[17];
 // Konten baris 1 sebelumnya (mencegah kedipan)
 char lcdPrevRow1[17];
-// Suhu yang disimpan untuk LCD
-double lastTemp = 0.0;
+// Suhu yang disimpan (diskalakan 100x, misal 2850 untuk 28.50C)
+int32_t lastTemp = 0;
 // Status PIN_BTN yang telah didestabilisasi (true = sirkuit terbuka)
 bool btnOpen = false;
 // Status PIN_BTN2 yang telah didestabilisasi (true = jack 3.5mm terlepas)
@@ -140,12 +139,12 @@ static char* appendBool(char* dst, bool val) {
   return val ? appendP(dst, PSTR("1")) : appendP(dst, PSTR("0"));
 }
 
-// Atur semua output alarm sekaligus
+// Atur semua output alarm sekaligus dengan jeda 50ms untuk mencegah lonjakan arus
 static void setAlarmOutputs(uint8_t red, uint8_t yel, uint8_t grn, uint8_t sir, uint8_t rot) {
-  digitalWrite(PIN_RED, red);
-  digitalWrite(PIN_YEL, yel);
-  digitalWrite(PIN_GRN, grn);
-  digitalWrite(PIN_SIR, sir);
+  digitalWrite(PIN_RED, red); delay(50);
+  digitalWrite(PIN_YEL, yel); delay(50);
+  digitalWrite(PIN_GRN, grn); delay(50);
+  digitalWrite(PIN_SIR, sir); delay(50);
   digitalWrite(PIN_ROT, rot);
 }
 
@@ -202,20 +201,27 @@ void refreshLcdMessage() {
 }
 
 // Perbarui tampilan LCD — dipanggil setiap iterasi loop
-void updateLCD(double temp) {
+void updateLCD(int32_t temp) {
   char row0[17];
   char row1[17];
 
   // --- Buat Baris 0: "XX.X\xDF C  STATUS" ---
   // Suhu di sisi kiri (kolom 0-6): "XX.X\xDFC" (simbol derajat + C)
   char tbuf[7];
-  // contoh "28.5"
-  dtostrf(temp, 4, 1, tbuf);
-  // Buat row0 dengan spasi
+  int whole = temp / 100;
+  int frac = (temp / 10) % 10;
+  if (frac < 0) frac = -frac;
+  
+  itoa(whole, tbuf, 10);
+  uint8_t tlen = strlen(tbuf);
+  tbuf[tlen] = '.';
+  tbuf[tlen+1] = '0' + frac;
+  tbuf[tlen+2] = '\0';
+  tlen += 2;
   memset(row0, ' ', 16);
   row0[16] = '\0';
   // Salin digit suhu
-  uint8_t tlen = strlen(tbuf);
+  tlen = strlen(tbuf);
   memcpy(row0, tbuf, tlen);
   // simbol derajat
   row0[tlen] = '\xDF';
@@ -279,41 +285,70 @@ void updateLCD(double temp) {
 // === Fungsi Fallback SIM800L ===
 #ifdef USE_SIM800L
 
+// Fungsi helper untuk mengirim AT command dan menunggu respons tertentu
+bool sendATCommand(const char* cmd_P, const char* expected_P, unsigned long timeout) {
+  while(simSerial.available()) simSerial.read(); // Bersihkan buffer
+  simSerial.println((const __FlashStringHelper*)cmd_P);
+  
+  unsigned long t0 = millis();
+  char buf[32];
+  uint8_t i = 0;
+  
+  while (millis() - t0 < timeout) {
+    if (simSerial.available()) {
+      char c = simSerial.read();
+      if (i < sizeof(buf) - 1) {
+        buf[i++] = c;
+        buf[i] = '\0';
+        if (strstr_P(buf, expected_P)) return true;
+      } else {
+        // Geser buffer untuk mencegah overflow
+        memmove(buf, buf + 16, 16);
+        i = 16;
+      }
+    }
+  }
+  return false;
+}
+
 void initSim800L() {
   simSerial.begin(SIM_BAUD);
-  gsm.init();
   delay(3000);
 
-  Serial.print(F("SIM PhoneFunc... "));
-  Serial.println(gsm.setPhoneFunc(1));
-  delay(1000);
-
-  Serial.print(F("SIM Registered?... "));
-  bool reg = gsm.isRegistered();
-  Serial.println(reg);
-
-  if (!reg) {
-    Serial.println(F("SIM not registered!"));
+  Serial.print(F("SIM Init... "));
+  if (!sendATCommand(PSTR("AT"), PSTR("OK"), 2000)) {
+    Serial.println(F("Gagal!"));
     simReady = false;
     return;
   }
+  Serial.println(F("OK"));
 
-  Serial.print(F("SIM Signal... "));
-  Serial.println(gsm.signalQuality());
-
-  gsm.gprsInit(SIM_APN);
-  delay(1000);
+  Serial.print(F("SIM Registered?... "));
+  if (!sendATCommand(PSTR("AT+CREG?"), PSTR("+CREG: 0,1"), 3000) && 
+      !sendATCommand(PSTR("AT+CREG?"), PSTR("+CREG: 0,5"), 3000)) {
+    Serial.println(F("Belum terdaftar!"));
+    simReady = false;
+    return;
+  }
+  Serial.println(F("OK"));
 
   Serial.print(F("SIM GPRS... "));
-  bool conn = gsm.connect();
-  Serial.println(conn);
-
-  if (conn) {
-    Serial.print(F("SIM IP: "));
-    Serial.println(gsm.getIP());
+  // Tutup bearer jika masih terbuka
+  sendATCommand(PSTR("AT+SAPBR=0,1"), PSTR("OK"), 1000);
+  
+  sendATCommand(PSTR("AT+SAPBR=3,1,\"Contype\",\"GPRS\""), PSTR("OK"), 1000);
+  
+  char apnCmd[40];
+  strcpy_P(apnCmd, PSTR("AT+SAPBR=3,1,\"APN\",\""));
+  strcat(apnCmd, SIM_APN);
+  strcat_P(apnCmd, PSTR("\""));
+  sendATCommand(apnCmd, PSTR("OK"), 1000);
+  
+  if (sendATCommand(PSTR("AT+SAPBR=1,1"), PSTR("OK"), 5000)) {
+    Serial.println(F("Tersambung"));
     simReady = true;
   } else {
-    Serial.println(F("SIM GPRS failed!"));
+    Serial.println(F("Gagal!"));
     simReady = false;
   }
 }
@@ -363,7 +398,14 @@ void sendViaSim(const char* endpoint_P, bool isHeartbeat) {
     p = appendBool(p, isPanic);
     p = appendP(p, PSTR(",\"t\":\""));
     char tempBuf[8];
-    dtostrf(lastTemp, 4, 2, tempBuf);
+    int whole = lastTemp / 100;
+    int frac = lastTemp % 100;
+    if (frac < 0) frac = -frac;
+    itoa(whole, tempBuf, 10);
+    p = appendR(p, tempBuf);
+    p = appendP(p, PSTR("."));
+    if (frac < 10) p = appendP(p, PSTR("0"));
+    itoa(frac, tempBuf, 10);
     p = appendR(p, tempBuf);
     p = appendP(p, PSTR("\",\"cn\":\"sim\"}"));
   } else {
@@ -411,18 +453,65 @@ void sendViaSim(const char* endpoint_P, bool isHeartbeat) {
   Serial.print(F("SIM POST: "));
   Serial.println(url);
 
-  // Kirim POST via GPRS (param ke-4 = true untuk membaca data respons)
-  String resp = gsm.post(url, body, "application/json", true);
-  Serial.print(F("SIM Resp: "));
-  Serial.println(resp);
+  // Mulai sesi HTTP AT Commands
+  sendATCommand(PSTR("AT+HTTPTERM"), PSTR("OK"), 1000); // Pastikan tertutup
+  if (!sendATCommand(PSTR("AT+HTTPINIT"), PSTR("OK"), 2000)) goto sim_fail;
+  if (!sendATCommand(PSTR("AT+HTTPPARA=\"CID\",1"), PSTR("OK"), 2000)) goto sim_fail;
+  
+  // Set URL
+  simSerial.print(F("AT+HTTPPARA=\"URL\",\""));
+  simSerial.print(url);
+  simSerial.println(F("\""));
+  if (!sendATCommand(PSTR(""), PSTR("OK"), 2000)) goto sim_fail;
 
-  // Periksa status HTTP 2xx
-  if (resp.indexOf(F("HTTPCODE:2")) >= 0) {
-    // Gunakan ulang body[] untuk parsing respons (tidak lagi diperlukan untuk payload)
-    int dataIdx = resp.indexOf(F("DATA:"));
-    if (dataIdx >= 0) {
-      resp.substring(dataIdx + 5).toCharArray(body, sizeof(body));
+  // Set tipe konten
+  if (!sendATCommand(PSTR("AT+HTTPPARA=\"CONTENT\",\"application/json\""), PSTR("OK"), 2000)) goto sim_fail;
 
+  // Tulis data (body)
+  simSerial.print(F("AT+HTTPDATA="));
+  simSerial.print(strlen(body));
+  simSerial.println(F(",10000"));
+  if (!sendATCommand(PSTR(""), PSTR("DOWNLOAD"), 3000)) goto sim_fail;
+  simSerial.println(body);
+  if (!sendATCommand(PSTR(""), PSTR("OK"), 5000)) goto sim_fail;
+
+  // Lakukan aksi POST
+  Serial.println(F("Mengirim..."));
+  if (!sendATCommand(PSTR("AT+HTTPACTION=1"), PSTR("+HTTPACTION: 1,2"), 15000)) { // 2xx status code
+    Serial.println(F("HTTP 2xx Gagal!"));
+    goto sim_fail;
+  }
+
+  // Baca respons HTTP
+  simSerial.println(F("AT+HTTPREAD"));
+  {
+    unsigned long t0 = millis();
+    uint8_t i = 0;
+    bool inData = false;
+    
+    // Baca respons secara langsung ke buffer body
+    while (millis() - t0 < 5000) {
+      if (simSerial.available()) {
+        char c = simSerial.read();
+        
+        // Deteksi awal respons (setelah pesan +HTTPREAD: ...)
+        if (!inData && c == '{') {
+          inData = true;
+          body[i++] = '{';
+          continue;
+        }
+        
+        if (inData) {
+          if (i < sizeof(body) - 1) {
+            body[i++] = c;
+            body[i] = '\0';
+          }
+          if (c == '}') break; // Akhir JSON
+        }
+      }
+    }
+
+    if (inData) {
       // Urai perintah (sama seperti parsing respons sendApiRequest)
       if (strstr_P(body, PSTR("\"cmd\":\"rst\""))) {
         isPanic = false;
@@ -431,23 +520,35 @@ void sendViaSim(const char* endpoint_P, bool isHeartbeat) {
       }
       else if (strstr_P(body, PSTR("\"cmd\":\"pnc\""))) {
         isPanic = true;
-        digitalWrite(PIN_GRN, RELAY_OFF);
-        digitalWrite(PIN_YEL, RELAY_ON);
-        if (!muteRotator) digitalWrite(PIN_ROT, RELAY_ON);
-        if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
+        digitalWrite(PIN_GRN, RELAY_OFF); delay(50);
+        digitalWrite(PIN_YEL, RELAY_ON); delay(50);
+        if (!muteRotator) { digitalWrite(PIN_ROT, RELAY_ON); delay(50); }
+        if (!muteSirene) { digitalWrite(PIN_SIR, RELAY_ON); }
       }
 
-      if (strstr_P(body, PSTR("\"ms\":true"))) {
+      if (strstr_P(body, PSTR("\"ms\":1"))) { // Diperbarui untuk "ms":1 / "ms":0 jika server juga pakai int
         muteSirene = true;
         if (isPanic) digitalWrite(PIN_SIR, RELAY_OFF);
-      } else if (strstr_P(body, PSTR("\"ms\":false"))) {
+      } else if (strstr_P(body, PSTR("\"ms\":true"))) { // Fallback jika server mengirim true
+        muteSirene = true;
+        if (isPanic) digitalWrite(PIN_SIR, RELAY_OFF);
+      } else if (strstr_P(body, PSTR("\"ms\":0"))) {
+        muteSirene = false;
+        if (isPanic) digitalWrite(PIN_SIR, RELAY_ON);
+      } else if (strstr_P(body, PSTR("\"ms\":false"))) { // Fallback
         muteSirene = false;
         if (isPanic) digitalWrite(PIN_SIR, RELAY_ON);
       }
 
-      if (strstr_P(body, PSTR("\"mr\":true"))) {
+      if (strstr_P(body, PSTR("\"mr\":1"))) {
         muteRotator = true;
         if (isPanic) digitalWrite(PIN_ROT, RELAY_OFF);
+      } else if (strstr_P(body, PSTR("\"mr\":true"))) {
+        muteRotator = true;
+        if (isPanic) digitalWrite(PIN_ROT, RELAY_OFF);
+      } else if (strstr_P(body, PSTR("\"mr\":0"))) {
+        muteRotator = false;
+        if (isPanic) digitalWrite(PIN_ROT, RELAY_ON);
       } else if (strstr_P(body, PSTR("\"mr\":false"))) {
         muteRotator = false;
         if (isPanic) digitalWrite(PIN_ROT, RELAY_ON);
@@ -471,13 +572,50 @@ void sendViaSim(const char* endpoint_P, bool isHeartbeat) {
     if (!isPanic) {
       digitalWrite(PIN_YEL, RELAY_OFF);
     }
-  } else {
-    Serial.println(F("SIM POST failed!"));
-    simReady = false; // Akan diinisialisasi ulang pada percobaan berikutnya
+    sendATCommand(PSTR("AT+HTTPTERM"), PSTR("OK"), 2000);
+    return;
   }
+
+sim_fail:
+  Serial.println(F("SIM POST failed!"));
+  sendATCommand(PSTR("AT+HTTPTERM"), PSTR("OK"), 1000);
+  simReady = false; // Akan diinisialisasi ulang pada percobaan berikutnya
 }
 
 #endif
+
+// --- Driver Raw I2C BMP280 (Tanpa Float) ---
+bool initBMP280() {
+  Wire.begin();
+  Wire.beginTransmission(I2C_ADDRESS);
+  Wire.write(0x88);
+  if (Wire.endTransmission() != 0) return false;
+  
+  if (Wire.requestFrom((int)I2C_ADDRESS, 6) != 6) return false;
+  dig_T1 = Wire.read() | (Wire.read() << 8);
+  dig_T2 = Wire.read() | (Wire.read() << 8);
+  dig_T3 = Wire.read() | (Wire.read() << 8);
+
+  Wire.beginTransmission(I2C_ADDRESS);
+  Wire.write(0xF4);
+  Wire.write(0x23); // x1 Temp oversampling, Normal mode
+  return (Wire.endTransmission() == 0);
+}
+
+int32_t readBMP280Temp() {
+  Wire.beginTransmission(I2C_ADDRESS);
+  Wire.write(0xFA);
+  Wire.endTransmission();
+  
+  if (Wire.requestFrom((int)I2C_ADDRESS, 3) != 3) return lastTemp;
+  
+  int32_t adc_T = ((uint32_t)Wire.read() << 12) | ((uint32_t)Wire.read() << 4) | (Wire.read() >> 4);
+  
+  int32_t var1, var2;
+  var1 = ((((adc_T >> 3) - ((int32_t)dig_T1 << 1))) * ((int32_t)dig_T2)) >> 11;
+  var2 = (((((adc_T >> 4) - ((int32_t)dig_T1)) * ((adc_T >> 4) - ((int32_t)dig_T1))) >> 12) * ((int32_t)dig_T3)) >> 14;
+  return ((var1 + var2) * 5 + 128) >> 8;
+}
 
 void setup() {
   pinMode(PIN_BTN, INPUT_PULLUP);
@@ -516,15 +654,13 @@ void setup() {
   Ethernet.init(10);
   Serial.begin(9600);
 
-  while (!bmp280.InitSensor()) {
+  while (!initBMP280()) {
     delay(3000);
     Serial.println(F("BMP280 not found"));
     lcd.setCursor(0, 1);
     lcd.print(F("BMP280 ERROR!   "));
   }
-  Serial.print(F("ChipID:0x"));
-  Serial.println(bmp280.readForChipID(), HEX);
-  delay(2000);
+  delay(100);
 
   Serial.println(F("Init Eth"));
   lcd.setCursor(0, 1);
@@ -564,7 +700,7 @@ void loop() {
   // Baca PIN_BTN (A0) dan PIN_BTN2 (A1) secara langsung
   bool btnState = digitalRead(PIN_BTN);
   bool btn2State = digitalRead(PIN_BTN2);
-  double temp = bmp280.readTemperature();
+  int32_t temp = readBMP280Temp();
   lastTemp = temp;
 
   // Perbarui status yang disimpan untuk LCD
@@ -627,7 +763,7 @@ void loop() {
       usingSimFallback = false;
       srvDown = false;
       failCount = 0;
-      digitalWrite(PIN_RED, RELAY_OFF);
+      digitalWrite(PIN_RED, RELAY_OFF); delay(50);
       digitalWrite(PIN_GRN, RELAY_ON);
       Serial.println(F("ETH restored!"));
     }
@@ -640,10 +776,10 @@ void triggerPanicON() {
   isPanic = true;
   Serial.println(F("PANIC ON"));
 
-  digitalWrite(PIN_GRN, RELAY_OFF);
-  digitalWrite(PIN_YEL, RELAY_ON);
-  if (!muteRotator) digitalWrite(PIN_ROT, RELAY_ON);
-  if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
+  digitalWrite(PIN_GRN, RELAY_OFF); delay(50);
+  digitalWrite(PIN_YEL, RELAY_ON); delay(50);
+  if (!muteRotator) { digitalWrite(PIN_ROT, RELAY_ON); delay(50); }
+  if (!muteSirene) { digitalWrite(PIN_SIR, RELAY_ON); }
 
   sendApiRequest(PSTR("/api/panic"), false);
 
@@ -691,10 +827,17 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
     p = appendBool(p, digitalRead(PIN_ROT) == RELAY_ON);
     p = appendP(p, PSTR(",\"ps\":"));
     p = appendBool(p, isPanic);
-    // Tambahkan pembacaan suhu (kirim sebagai string agar HMAC server tidak gagal saat parse)
+    // Tambahkan pembacaan suhu (kirim sebagai string format desimal buatan)
     p = appendP(p, PSTR(",\"t\":\""));
     char tempBuf[8];
-    dtostrf(lastTemp, 4, 2, tempBuf);
+    int whole = lastTemp / 100;
+    int frac = lastTemp % 100;
+    if (frac < 0) frac = -frac;
+    itoa(whole, tempBuf, 10);
+    p = appendR(p, tempBuf);
+    p = appendP(p, PSTR("."));
+    if (frac < 10) p = appendP(p, PSTR("0"));
+    itoa(frac, tempBuf, 10);
     p = appendR(p, tempBuf);
     p = appendP(p, PSTR("\",\"cn\":\"eth\"}"));
   } else {
@@ -770,10 +913,10 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
       }
       else if (strstr_P(buf, PSTR("\"cmd\":\"pnc\""))) {
         isPanic = true;
-        digitalWrite(PIN_GRN, RELAY_OFF);
-        digitalWrite(PIN_YEL, RELAY_ON);
-        if (!muteRotator) digitalWrite(PIN_ROT, RELAY_ON);
-        if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
+        digitalWrite(PIN_GRN, RELAY_OFF); delay(50);
+        digitalWrite(PIN_YEL, RELAY_ON); delay(50);
+        if (!muteRotator) { digitalWrite(PIN_ROT, RELAY_ON); delay(50); }
+        if (!muteSirene) { digitalWrite(PIN_SIR, RELAY_ON); }
       }
 
       // Urai bendera bisu mode senyap granular
@@ -818,7 +961,7 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
     if (failCount >= 3 && !srvDown) {
       srvDown = true;
       if (!isPanic) {
-        digitalWrite(PIN_GRN, RELAY_OFF);
+        digitalWrite(PIN_GRN, RELAY_OFF); delay(50);
         digitalWrite(PIN_RED, RELAY_ON);
       }
     }
