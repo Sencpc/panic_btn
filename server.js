@@ -134,6 +134,15 @@ async function initDB() {
 
     try {
       await pool.query(
+        `ALTER TABLE heartbeats ADD COLUMN connection_type VARCHAR(10) DEFAULT 'eth'`,
+      );
+      console.log("Added connection_type column to heartbeats.");
+    } catch (e) {
+      if (!e.message.includes("Duplicate column")) throw e;
+    }
+
+    try {
+      await pool.query(
         `ALTER TABLE devices ADD COLUMN lcd_message VARCHAR(64) DEFAULT NULL`,
       );
       console.log("Added lcd_message column to devices.");
@@ -291,10 +300,11 @@ async function getAndConsumeCommand(deviceId) {
 // ═══════════════════════════════════════════════════════════════════
 
 const verifyHMAC = async (req, res, next) => {
-  const deviceId = req.headers["x-device-id"];
-  const timestamp = req.headers["x-timestamp"];
-  const nonce = req.headers["x-nonce"];
-  const signature = req.headers["x-signature"];
+  // Cek header dulu (Ethernet), lalu query params sebagai fallback (SIM800L GPRS)
+  const deviceId = req.headers["x-device-id"] || req.query.did;
+  const timestamp = req.headers["x-timestamp"] || req.query.ts;
+  const nonce = req.headers["x-nonce"] || req.query.n;
+  const signature = req.headers["x-signature"] || req.query.sig;
 
   if (!deviceId || !timestamp || !nonce || !signature) {
     return res.status(401).json({
@@ -367,7 +377,7 @@ const verifyHMAC = async (req, res, next) => {
 // ═══════════════════════════════════════════════════════════════════
 
 app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
-  const { id, ts, r, y, g, pb, sir, rot, ps, t } = req.body;
+  const { id, ts, r, y, g, pb, sir, rot, ps, t, cn } = req.body;
   const device_id = id;
   const timestamp = ts;
   const led_red = y;
@@ -378,6 +388,7 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
   const rotator = rot;
   const panic_state = ps;
   const temperature = t;
+  const connection_type = cn || 'eth';
 
   if (!device_id)
     return res
@@ -397,8 +408,8 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature, connection_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         device_id,
         timestamp || 0,
@@ -411,6 +422,7 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
         rotator ? 1 : 0,
         panic_state ? 1 : 0,
         temperature != null ? temperature : null,
+        connection_type,
       ],
     );
 
@@ -437,7 +449,7 @@ app.post("/api/heartbeat", verifyHMAC, async (req, res) => {
 });
 
 app.post("/api/panic", verifyHMAC, async (req, res) => {
-  const { id, ts, r, y, g, pb, sir, rot, ps, t } = req.body;
+  const { id, ts, r, y, g, pb, sir, rot, ps, t, cn } = req.body;
   const device_id = id;
   const timestamp = ts;
   const led_red = y;
@@ -448,6 +460,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
   const rotator = rot;
   const panic_state = ps;
   const temperature = t;
+  const connection_type = cn || 'eth';
 
   if (!device_id)
     return res
@@ -463,8 +476,8 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature, connection_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         device_id,
         timestamp || 0,
@@ -477,6 +490,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
         rotator ? 1 : 0,
         panic_state ? 1 : 0,
         temperature != null ? temperature : null,
+        connection_type,
       ],
     );
 
@@ -508,7 +522,7 @@ app.post("/api/panic", verifyHMAC, async (req, res) => {
 });
 
 app.post("/api/panicoff", verifyHMAC, async (req, res) => {
-  const { id, ts, r, y, g, pb, sir, rot, ps, t } = req.body;
+  const { id, ts, r, y, g, pb, sir, rot, ps, t, cn } = req.body;
   const device_id = id;
   const timestamp = ts;
   const led_red = y;
@@ -519,6 +533,7 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
   const rotator = rot;
   const panic_state = ps;
   const temperature = t;
+  const connection_type = cn || 'eth';
 
   if (!device_id)
     return res
@@ -534,8 +549,8 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO heartbeats (device_id, timestamp, device_ip, led_red, led_yellow, led_green, panic_button, sirene, rotator, panic_state, temperature, connection_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         device_id,
         timestamp || 0,
@@ -548,6 +563,7 @@ app.post("/api/panicoff", verifyHMAC, async (req, res) => {
         rotator ? 1 : 0,
         panic_state ? 1 : 0,
         temperature != null ? temperature : null,
+        connection_type,
       ],
     );
 
@@ -651,10 +667,10 @@ app.get("/api/devices", verifyDashboardAuth, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT d.*, 
       TIMESTAMPDIFF(SECOND, d.last_seen, NOW()) as seconds_ago,
-      h.led_red, h.led_yellow, h.led_green, h.sirene, h.rotator, h.panic_button, h.panic_state, h.temperature
+      h.led_red, h.led_yellow, h.led_green, h.sirene, h.rotator, h.panic_button, h.panic_state, h.temperature, h.connection_type
       FROM devices d
       LEFT JOIN (
-          SELECT device_id, led_red, led_yellow, led_green, sirene, rotator, panic_button, panic_state, temperature
+          SELECT device_id, led_red, led_yellow, led_green, sirene, rotator, panic_button, panic_state, temperature, connection_type
           FROM heartbeats h1
           WHERE id = (SELECT MAX(id) FROM heartbeats h2 WHERE h1.device_id = h2.device_id)
       ) h ON d.device_id = h.device_id

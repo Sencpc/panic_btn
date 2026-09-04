@@ -3,18 +3,45 @@
  * Deskripsi: Sistem tombol panik terhubung ke jaringan Ethernet dengan sensor suhu (BMP280),
  *            layar LCD, indikator LED, sirene, dan rotator. Koneksi dengan sever menggunakan Ethernet dan terenkripsi HMAC-SHA256.
  *
- * Pustaka yang digunakan:
+ * Pustaka external yang digunakan:
  * - sha256: Diambil dan dimodifikasi dari https://github.com/Cathedrow/Cryptosuite.git
  * - bmp280_ltsm: Untuk pembacaan sensor dari https://github.com/gavinlyonsrepo/BMP280_LTSM
- * - SPI: Untuk komunikasi SPI dari https://docs.arduino.cc/language-reference/en/functions/communication/SPI/
- * - Ethernet: Untuk komunikasi jaringan dari https://github.com/arduino-libraries/ethernet
  * - LiquidCrystal_I2C: Untuk tampilan LCD dari https://github.com/johnrickman/LiquidCrystal_I2C
+ * - GSMSimHTTP: Untuk komunikasi SIM800L dari https://github.com/erdemarslan/GSMSim
+ * 
+ * Pustaka dari Arduino ide:
+ * - SPI
+ * - Ethernet
+ * - SoftwareSerial
  */
 #include <sha256.h>
 #include "bmp280_ltsm.hpp"
 #include <SPI.h>
 #include <Ethernet.h>
 #include <LiquidCrystal_I2C.h>
+
+// === MODUL DARURAT FALLBACK SIM800L ===
+// Hapus komentar baris di bawah untuk mengaktifkan fallback GPRS SIM800L
+// #define USE_SIM800L
+
+#ifdef USE_SIM800L
+  #include <SoftwareSerial.h>
+  #include <GSMSimHTTP.h>
+
+  #define PIN_SIM_RX   2        // Arduino RX <- SIM800L TX
+  #define PIN_SIM_TX   3        // Arduino TX -> SIM800L RX
+  #define PIN_SIM_RST  9        // Pin dummy (RST tidak disambungkan — library men-toggle tanpa efek)
+  #define SIM_BAUD     9600     // Baud rate SoftwareSerial (9600 direkomendasikan)
+  #define SIM_APN      "internet" // Ganti sesuai APN operator Anda
+
+  SoftwareSerial simSerial(PIN_SIM_RX, PIN_SIM_TX);
+  GSMSimHTTP gsm(simSerial, PIN_SIM_RST);
+
+  bool simReady = false;           // SIM800L terinisialisasi dan GPRS terhubung
+  bool usingSimFallback = false;   // Sedang mengirim data melalui SIM800L
+  unsigned long lastEthRetry = 0;  // Waktu terakhir coba ulang Ethernet
+  #define ETH_RETRY_INTERVAL 30000UL  // Coba ulang Ethernet setiap 30 detik
+#endif
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
@@ -108,9 +135,9 @@ static char* appendR(char* dst, const char* s) {
   return dst;
 }
 
-// Tambahkan "true" atau "false" berdasarkan kondisi
+// Tambahkan "1" atau "0" berdasarkan kondisi (optimasi payload Uno)
 static char* appendBool(char* dst, bool val) {
-  return val ? appendP(dst, PSTR("true")) : appendP(dst, PSTR("false"));
+  return val ? appendP(dst, PSTR("1")) : appendP(dst, PSTR("0"));
 }
 
 // Atur semua output alarm sekaligus
@@ -150,7 +177,15 @@ void refreshLcdMessage() {
   } else if (isPanic) {
     setLcdMessage_P(PSTR("!! EMERGENCY ACTIVE !!"));
   } else if (srvDown) {
+#ifdef USE_SIM800L
+    if (usingSimFallback) {
+      setLcdMessage_P(PSTR("Fallback: SIM800L"));
+    } else {
+      setLcdMessage_P(PSTR("Server disconnected!"));
+    }
+#else
     setLcdMessage_P(PSTR("Server disconnected!"));
+#endif
   } else if (btnOpen) {
     setLcdMessage_P(PSTR("BTN circuit OPEN!"));
   } else if (lcdSrvMsg[0] != '\0') {
@@ -189,6 +224,9 @@ void updateLCD(double temp) {
   // Status di sisi kanan (kolom 8-15)
   const char* stat;
   if (isPanic)        stat = "!!PANIC";
+#ifdef USE_SIM800L
+  else if (usingSimFallback) stat = "   SIM";
+#endif
   else if (srvDown)   stat = "NO SRVR";
   else if (muteSirene || muteRotator)  stat = " SILENT";
   else                stat = " NORMAL";
@@ -237,6 +275,209 @@ void updateLCD(double temp) {
     memcpy(lcdPrevRow1, row1, 16);
   }
 }
+
+// === Fungsi Fallback SIM800L ===
+#ifdef USE_SIM800L
+
+void initSim800L() {
+  simSerial.begin(SIM_BAUD);
+  gsm.init();
+  delay(3000);
+
+  Serial.print(F("SIM PhoneFunc... "));
+  Serial.println(gsm.setPhoneFunc(1));
+  delay(1000);
+
+  Serial.print(F("SIM Registered?... "));
+  bool reg = gsm.isRegistered();
+  Serial.println(reg);
+
+  if (!reg) {
+    Serial.println(F("SIM not registered!"));
+    simReady = false;
+    return;
+  }
+
+  Serial.print(F("SIM Signal... "));
+  Serial.println(gsm.signalQuality());
+
+  gsm.gprsInit(SIM_APN);
+  delay(1000);
+
+  Serial.print(F("SIM GPRS... "));
+  bool conn = gsm.connect();
+  Serial.println(conn);
+
+  if (conn) {
+    Serial.print(F("SIM IP: "));
+    Serial.println(gsm.getIP());
+    simReady = true;
+  } else {
+    Serial.println(F("SIM GPRS failed!"));
+    simReady = false;
+  }
+}
+
+// Kirim permintaan API via GPRS SIM800L (fallback untuk Ethernet)
+// Dioptimasi untuk Uno: buffer lebih kecil, menggunakan ulang body[] untuk parsing respons
+void sendViaSim(const char* endpoint_P, bool isHeartbeat) {
+  if (!simReady) {
+    initSim800L();
+    if (!simReady) return;
+  }
+
+  unsigned long ts = millis();
+  char tsBuf[12];
+  ultoa(ts, tsBuf, 10);
+
+  // Hasilkan nonce
+  char nonce[9];
+  uint16_t r1 = random(65536), r2 = random(65536);
+  hexByte(nonce, r1 >> 8); hexByte(nonce + 2, r1 & 0xFF);
+  hexByte(nonce + 4, r2 >> 8); hexByte(nonce + 6, r2 & 0xFF);
+  nonce[8] = '\0';
+
+  // Bangun payload JSON — ukuran buffer sesuai payload maksimal (~142 karakter)
+  char body[150];
+  char* p = body;
+
+  p = appendP(p, PSTR("{\"id\":\""));
+  p = appendR(p, devIdBuf);
+
+  if (isHeartbeat) {
+    p = appendP(p, PSTR("\",\"st\":\"hb\",\"ts\":"));
+    p = appendR(p, tsBuf);
+    p = appendP(p, PSTR(",\"r\":"));
+    p = appendBool(p, digitalRead(PIN_RED) == RELAY_ON);
+    p = appendP(p, PSTR(",\"y\":"));
+    p = appendBool(p, digitalRead(PIN_YEL) == RELAY_ON);
+    p = appendP(p, PSTR(",\"g\":"));
+    p = appendBool(p, digitalRead(PIN_GRN) == RELAY_ON);
+    p = appendP(p, PSTR(",\"pb\":"));
+    p = appendBool(p, digitalRead(PIN_BTN) == HIGH);
+    p = appendP(p, PSTR(",\"sir\":"));
+    p = appendBool(p, digitalRead(PIN_SIR) == RELAY_ON);
+    p = appendP(p, PSTR(",\"rot\":"));
+    p = appendBool(p, digitalRead(PIN_ROT) == RELAY_ON);
+    p = appendP(p, PSTR(",\"ps\":"));
+    p = appendBool(p, isPanic);
+    p = appendP(p, PSTR(",\"t\":\""));
+    char tempBuf[8];
+    dtostrf(lastTemp, 4, 2, tempBuf);
+    p = appendR(p, tempBuf);
+    p = appendP(p, PSTR("\",\"cn\":\"sim\"}"));
+  } else {
+    p = appendP(p, PSTR("\",\"st\":\"p\",\"ts\":"));
+    p = appendR(p, tsBuf);
+    *p++ = '}'; *p = '\0';
+  }
+
+  // Tanda tangan HMAC-SHA256
+  uint8_t keyBuf[32];
+  memcpy_P(keyBuf, SECRET_KEY, 32);
+  Sha256.initHmac(keyBuf, 32);
+  Sha256.print(devIdBuf);
+  Sha256.print(tsBuf);
+  Sha256.print(nonce);
+  Sha256.print(body);
+
+  uint8_t* hash = Sha256.resultHmac();
+  char sig[65];
+  for (uint8_t i = 0; i < 32; i++) {
+    hexByte(sig + (i << 1), hash[i]);
+  }
+  sig[64] = '\0';
+
+  // Bangun URL: server:port/endpoint?did=ID&ts=TS&n=NONCE&sig=SIG
+  // Auth di query params (GSMSimHTTP tidak mendukung custom header)
+  // Maks URL ~155 karakter
+  char url[160];
+  char* u = url;
+  u = appendR(u, serverNameBuf);
+  *u++ = ':';
+  char portBuf[6];
+  itoa(serverPort, portBuf, 10);
+  u = appendR(u, portBuf);
+  u = appendP(u, endpoint_P);
+  u = appendP(u, PSTR("?did="));
+  u = appendR(u, devIdBuf);
+  u = appendP(u, PSTR("&ts="));
+  u = appendR(u, tsBuf);
+  u = appendP(u, PSTR("&n="));
+  u = appendR(u, nonce);
+  u = appendP(u, PSTR("&sig="));
+  u = appendR(u, sig);
+
+  Serial.print(F("SIM POST: "));
+  Serial.println(url);
+
+  // Kirim POST via GPRS (param ke-4 = true untuk membaca data respons)
+  String resp = gsm.post(url, body, "application/json", true);
+  Serial.print(F("SIM Resp: "));
+  Serial.println(resp);
+
+  // Periksa status HTTP 2xx
+  if (resp.indexOf(F("HTTPCODE:2")) >= 0) {
+    // Gunakan ulang body[] untuk parsing respons (tidak lagi diperlukan untuk payload)
+    int dataIdx = resp.indexOf(F("DATA:"));
+    if (dataIdx >= 0) {
+      resp.substring(dataIdx + 5).toCharArray(body, sizeof(body));
+
+      // Urai perintah (sama seperti parsing respons sendApiRequest)
+      if (strstr_P(body, PSTR("\"cmd\":\"rst\""))) {
+        isPanic = false;
+        resetLocked = true;
+        setAlarmOutputs(RELAY_OFF, RELAY_OFF, RELAY_ON, RELAY_OFF, RELAY_OFF);
+      }
+      else if (strstr_P(body, PSTR("\"cmd\":\"pnc\""))) {
+        isPanic = true;
+        digitalWrite(PIN_GRN, RELAY_OFF);
+        digitalWrite(PIN_YEL, RELAY_ON);
+        if (!muteRotator) digitalWrite(PIN_ROT, RELAY_ON);
+        if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
+      }
+
+      if (strstr_P(body, PSTR("\"ms\":true"))) {
+        muteSirene = true;
+        if (isPanic) digitalWrite(PIN_SIR, RELAY_OFF);
+      } else if (strstr_P(body, PSTR("\"ms\":false"))) {
+        muteSirene = false;
+        if (isPanic) digitalWrite(PIN_SIR, RELAY_ON);
+      }
+
+      if (strstr_P(body, PSTR("\"mr\":true"))) {
+        muteRotator = true;
+        if (isPanic) digitalWrite(PIN_ROT, RELAY_OFF);
+      } else if (strstr_P(body, PSTR("\"mr\":false"))) {
+        muteRotator = false;
+        if (isPanic) digitalWrite(PIN_ROT, RELAY_ON);
+      }
+
+      // Urai pesan LCD dari server
+      const char* lcdKey = strstr_P(body, PSTR("\"lcd\":\""));
+      if (lcdKey) {
+        lcdKey += 7;
+        char* endQuote = strchr(lcdKey, '"');
+        if (endQuote && (endQuote - lcdKey) < (int)sizeof(lcdSrvMsg)) {
+          uint8_t mlen = endQuote - lcdKey;
+          memcpy(lcdSrvMsg, lcdKey, mlen);
+          lcdSrvMsg[mlen] = '\0';
+        }
+      } else if (strstr_P(body, PSTR("\"lcd\":null"))) {
+        lcdSrvMsg[0] = '\0';
+      }
+    }
+
+    if (!isPanic) {
+      digitalWrite(PIN_YEL, RELAY_OFF);
+    }
+  } else {
+    Serial.println(F("SIM POST failed!"));
+    simReady = false; // Akan diinisialisasi ulang pada percobaan berikutnya
+  }
+}
+
+#endif
 
 void setup() {
   pinMode(PIN_BTN, INPUT_PULLUP);
@@ -307,6 +548,13 @@ void setup() {
   delay(1000);
   randomSeed(analogRead(A2));
 
+#ifdef USE_SIM800L
+  lcd.setCursor(0, 1);
+  lcd.print(F("Init SIM800L... "));
+  initSim800L();
+  delay(1000);
+#endif
+
   // Bersihkan layar boot dan atur pesan awal
   lcd.clear();
   setLcdMessage_P(PSTR("System OK - Online"));
@@ -356,10 +604,35 @@ void loop() {
   unsigned long now = millis();
   if (now - lastHB >= 5000UL || lastHB == 0) {
     lastHB = now;
+#ifdef USE_SIM800L
+    // Saat dalam mode fallback SIM, lewati Ethernet sepenuhnya (hemat stack)
+    if (usingSimFallback) {
+      sendViaSim(PSTR("/api/heartbeat"), true);
+    } else {
+      sendApiRequest(PSTR("/api/heartbeat"), true);
+    }
+#else
     sendApiRequest(PSTR("/api/heartbeat"), true);
+#endif
   }
 
   Ethernet.maintain();
+
+#ifdef USE_SIM800L
+  // Coba ulang Ethernet secara berkala saat dalam fallback SIM
+  if (usingSimFallback && (now - lastEthRetry >= ETH_RETRY_INTERVAL)) {
+    lastEthRetry = now;
+    if (client.connect(serverNameBuf, serverPort)) {
+      client.stop();
+      usingSimFallback = false;
+      srvDown = false;
+      failCount = 0;
+      digitalWrite(PIN_RED, RELAY_OFF);
+      digitalWrite(PIN_GRN, RELAY_ON);
+      Serial.println(F("ETH restored!"));
+    }
+  }
+#endif
 }
 
 void triggerPanicON() {
@@ -373,6 +646,13 @@ void triggerPanicON() {
   if (!muteSirene) digitalWrite(PIN_SIR, RELAY_ON);
 
   sendApiRequest(PSTR("/api/panic"), false);
+
+#ifdef USE_SIM800L
+  // Jika Ethernet gagal, langsung coba ulang via SIM (stack bersih — sendApiRequest sudah selesai)
+  if (usingSimFallback) {
+    sendViaSim(PSTR("/api/panic"), false);
+  }
+#endif
 }
 
 void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
@@ -416,7 +696,7 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
     char tempBuf[8];
     dtostrf(lastTemp, 4, 2, tempBuf);
     p = appendR(p, tempBuf);
-    p = appendP(p, PSTR("\"}"));
+    p = appendP(p, PSTR("\",\"cn\":\"eth\"}"));
   } else {
     p = appendP(p, PSTR("\",\"st\":\"p\",\"ts\":"));
     p = appendR(p, tsBuf);
@@ -542,6 +822,12 @@ void sendApiRequest(const char* endpoint_P, bool isHeartbeat) {
         digitalWrite(PIN_RED, RELAY_ON);
       }
     }
+#ifdef USE_SIM800L
+    // Ethernet gagal — atur flag fallback (pemanggil menangani sendViaSim untuk menghindari stack overflow)
+    if (srvDown || !isHeartbeat) {
+      usingSimFallback = true;
+    }
+#endif
   }
 
   // Selalu perbarui pesan LCD setelah panggilan API (status mungkin telah berubah)

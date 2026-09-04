@@ -866,6 +866,14 @@
                           <span x-text="(dev.temperature != null ? dev.temperature.toFixed(1) : '--') + '°C'"></span>
                         </span>
                       </template>
+                      <template x-if="dev.connection_type">
+                        <span class="px-2 py-0.5 text-[10px] font-bold rounded-md border tracking-wide flex items-center gap-1"
+                              :class="dev.connection_type === 'sim' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'">
+                          <svg x-show="dev.connection_type === 'eth'" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+                          <svg x-show="dev.connection_type === 'sim'" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path></svg>
+                          <span x-text="dev.connection_type === 'sim' ? 'SIM' : 'ETH'"></span>
+                        </span>
+                      </template>
                     </div>
                     <div class="text-[11px] font-mono text-slate-500 mt-0.5">
                       <span x-text="dev.device_ip || 'No IP'"></span> • Seen
